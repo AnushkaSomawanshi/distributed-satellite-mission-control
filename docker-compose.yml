@@ -1,0 +1,138 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: satellite-postgres
+    environment:
+      POSTGRES_DB: satellite_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgrespassword
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: satellite-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mission-control:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: mission-control-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgrespassword@postgres:5432/satellite_db
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  satellite-01:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.satellite
+    container_name: satellite-01
+    environment:
+      - SAT_ID=SAT-01
+      - SAT_ADDRESS=satellite-01
+      - GRPC_PORT=5001
+      - P2P_PORT=6001
+      - REGISTRY_URL=http://mission-control:8000
+    ports:
+      - "5001:5001"
+      - "6001:6001"
+    depends_on:
+      - mission-control
+
+  satellite-02:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.satellite
+    container_name: satellite-02
+    environment:
+      - SAT_ID=SAT-02
+      - SAT_ADDRESS=satellite-02
+      - GRPC_PORT=5002
+      - P2P_PORT=6002
+      - REGISTRY_URL=http://mission-control:8000
+    ports:
+      - "5002:5002"
+      - "6002:6002"
+    depends_on:
+      - mission-control
+
+  satellite-03:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.satellite
+    container_name: satellite-03
+    environment:
+      - SAT_ID=SAT-03
+      - SAT_ADDRESS=satellite-03
+      - GRPC_PORT=5003
+      - P2P_PORT=6003
+      - REGISTRY_URL=http://mission-control:8000
+    ports:
+      - "5003:5003"
+      - "6003:6003"
+    depends_on:
+      - mission-control
+
+  satellite-04:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.satellite
+    container_name: satellite-04
+    environment:
+      - SAT_ID=SAT-04
+      - SAT_ADDRESS=satellite-04
+      - GRPC_PORT=5004
+      - P2P_PORT=6004
+      - REGISTRY_URL=http://mission-control:8000
+    ports:
+      - "5004:5004"
+      - "6004:6004"
+    depends_on:
+      - mission-control
+
+  satellite-05:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.satellite
+    container_name: satellite-05
+    environment:
+      - SAT_ID=SAT-05
+      - SAT_ADDRESS=satellite-05
+      - GRPC_PORT=5005
+      - P2P_PORT=6005
+      - REGISTRY_URL=http://mission-control:8000
+    ports:
+      - "5005:5005"
+      - "6005:6005"
+    depends_on:
+      - mission-control
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../docker/Dockerfile.frontend
+    container_name: mission-control-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - mission-control

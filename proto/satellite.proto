@@ -1,0 +1,112 @@
+syntax = "proto3";
+
+package satellite;
+
+// Health and Status query/response models
+message HealthRequest {
+  string caller_id = 1;
+  int64 timestamp = 2;
+}
+
+message HealthResponse {
+  string satellite_id = 1;
+  string status = 2;              // HEALTHY, WARNING, CRITICAL, OFFLINE
+  double health_score = 3;        // 0.0 - 100.0
+  double battery_level = 4;       // Percentage 0 - 100
+  double temperature = 5;         // Celsius
+  double cpu_usage = 6;           // Percentage 0 - 100
+  double memory_usage = 7;        // Percentage 0 - 100
+  double signal_strength = 8;     // Percentage 0 - 100
+  int64 uptime_seconds = 9;
+  int64 timestamp = 10;
+}
+
+message TelemetryRequest {
+  string caller_id = 1;
+}
+
+message Position {
+  double latitude = 1;
+  double longitude = 2;
+  double altitude_km = 3;
+  double velocity_kms = 4;
+}
+
+message TelemetryResponse {
+  string satellite_id = 1;
+  int64 sequence_number = 2;
+  Position position = 3;
+  HealthResponse health = 4;
+  int64 timestamp = 5;
+}
+
+message InfoRequest {
+  string caller_id = 1;
+}
+
+message InfoResponse {
+  string satellite_id = 1;
+  string node_id = 2;
+  string hostname = 3;
+  int32 grpc_port = 4;
+  int32 p2p_port = 5;
+  repeated string capabilities = 6;
+  string status = 7;
+  int64 start_time = 8;
+}
+
+message PingRequest {
+  string sender_id = 1;
+  int64 timestamp = 2;
+}
+
+message PingResponse {
+  string satellite_id = 1;
+  string status = 2;
+  int64 echo_timestamp = 3;
+  int64 response_timestamp = 4;
+}
+
+message CommandRequest {
+  string command_id = 1;
+  string action = 2;             // SET_POWER_MODE, CALIBRATE, RESTART, RESET_FAULTS
+  map<string, string> parameters = 3;
+  string sender = 4;
+}
+
+message CommandResponse {
+  string command_id = 1;
+  bool success = 2;
+  string message = 3;
+  int64 executed_at = 4;
+}
+
+// Peer-to-Peer messaging model
+message P2PRequest {
+  string message_id = 1;
+  string source_satellite_id = 2;
+  string destination_satellite_id = 3;
+  string message_type = 4;        // TELEMETRY_SYNC, EMERGENCY_ALERT, CROSS_LINK_DATA, ORBITAL_HANDSHAKE
+  string payload = 5;
+  int64 timestamp = 6;
+  int32 ttl = 7;
+}
+
+message P2PResponse {
+  string message_id = 1;
+  string receiver_satellite_id = 2;
+  bool acknowledged = 3;
+  string status_message = 4;
+  int64 received_timestamp = 5;
+  double processing_delay_ms = 6;
+}
+
+// gRPC Satellite Service contract
+service SatelliteService {
+  rpc GetHealth(HealthRequest) returns (HealthResponse);
+  rpc GetTelemetry(TelemetryRequest) returns (TelemetryResponse);
+  rpc GetSatelliteInfo(InfoRequest) returns (InfoResponse);
+  rpc Ping(PingRequest) returns (PingResponse);
+  rpc ExecuteCommand(CommandRequest) returns (CommandResponse);
+  rpc SendP2PMessage(P2PRequest) returns (P2PResponse);
+}

@@ -1,0 +1,20 @@
+ Image ds-project-satellite-03 Building 
+ Image ds-project-satellite-02 Building 
+ Image ds-project-satellite-05 Building 
+ Image ds-project-frontend Building 
+ Image ds-project-mission-control Building 
+ Image ds-project-satellite-04 Building 
+ Image ds-project-satellite-01 Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 3.56kB 0.0s done
+#1 DONE 0.0s
+
+#2 [internal] booting buildkit
+#2 pulling image moby/buildkit:buildx-stable-1
+#2 pulling image moby/buildkit:buildx-stable-1 91.3s done
+#2 ERROR: failed to authorize: failed to fetch oauth token: Post "https://auth.docker.io/token": remote error: tls: protocol version not supported
+------
+ > [internal] booting buildkit:
+------
+failed to authorize: failed to fetch oauth token: Post "https://auth.docker.io/token": remote error: tls: protocol version not supported
+
