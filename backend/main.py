@@ -125,7 +125,7 @@ async def register_satellite(req: RegistrationRequest):
         p2p_port=req.p2p_port,
         capabilities=req.capabilities
     )
-    logger.info(f"Registered Satellite {req.satellite_id} at {req.address}:{req.grpc_port}")
+    logger.info(f"[REGISTRY] Dynamic Registration SUCCESS | satellite_id={req.satellite_id} | node_id={req.node_id} | address={req.address}:{req.grpc_port} (gRPC) / :{req.p2p_port} (P2P) | status=ONLINE")
     await websocket_manager.broadcast({
         "event_type": "NODE_REGISTERED",
         "satellite_id": req.satellite_id,
@@ -136,6 +136,9 @@ async def register_satellite(req: RegistrationRequest):
 
 @app.post("/api/satellites/heartbeat")
 async def receive_heartbeat(req: HeartbeatRequest):
+    existing_reg = global_registry.lookup(req.satellite_id)
+    was_offline = existing_reg and existing_reg.status == "OFFLINE"
+
     score, status, breakdown = HealthEngine.calculate_health(
         battery=req.battery,
         temperature=req.temperature,
@@ -159,6 +162,11 @@ async def receive_heartbeat(req: HeartbeatRequest):
         p2p_port=req.p2p_port
     )
     
+    if was_offline:
+        logger.info(f"[RECOVERY] Mission Control ← {req.satellite_id} | Heartbeat resumed | status=ONLINE/HEALTHY | health_score={score}%")
+    else:
+        logger.info(f"[HEARTBEAT] Mission Control ← {req.satellite_id} | status=RECEIVED | health={score}% | battery={req.battery}% | temp={req.temperature}°C")
+
     # Broadcast telemetry update over WebSocket
     await websocket_manager.broadcast({
         "event_type": "TELEMETRY_UPDATED",
@@ -204,6 +212,7 @@ async def get_satellite_info(satellite_id: str):
 
 @app.post("/api/rpc/invoke")
 async def invoke_rpc(req: RPCInvokeRequest, db: AsyncSession = Depends(get_db)):
+    logger.info(f"[HTTP API] Frontend → Mission Control | endpoint=/api/rpc/invoke | target={req.target_satellite_id} | method={req.method} | status=RECEIVED")
     res = await grpc_manager.invoke_rpc(
         target_satellite_id=req.target_satellite_id,
         method_name=req.method,
@@ -224,24 +233,29 @@ async def invoke_rpc(req: RPCInvokeRequest, db: AsyncSession = Depends(get_db)):
     )
     db.add(evt)
     await db.commit()
+    logger.info(f"[DATABASE AUDIT] Persisted CommunicationEvent | event_id={evt.event_id} | protocol=gRPC | status={evt.status}")
 
     await websocket_manager.broadcast({
         "event_type": "RPC_EXECUTED",
         "result": res,
         "timestamp": time.time()
     })
+    logger.info(f"[HTTP API RESULT] Mission Control → Frontend | endpoint=/api/rpc/invoke | target={req.target_satellite_id} | method={req.method} | status={'SUCCESS' if res.get('success') else 'FAILED'} | latency={res.get('latency_ms', 0)}ms")
     return res
 
 @app.post("/api/p2p/send")
 async def send_p2p_message(req: P2PSendRequest, db: AsyncSession = Depends(get_db)):
+    logger.info(f"[HTTP API] Frontend → Mission Control | endpoint=/api/p2p/send | source={req.source_satellite_id} | destination={req.destination_satellite_id} | type={req.message_type} | status=RECEIVED")
     start_time = time.time()
     source_reg = global_registry.lookup(req.source_satellite_id)
     dest_reg = global_registry.lookup(req.destination_satellite_id)
 
     if not source_reg or not dest_reg:
+        logger.warning(f"[P2P ERROR] One or both satellites ({req.source_satellite_id}, {req.destination_satellite_id}) not found in registry")
         raise HTTPException(status_code=404, detail="Source or Destination Satellite not found in registry")
 
     if source_reg.status == "OFFLINE" or dest_reg.status == "OFFLINE":
+        logger.warning(f"[P2P REJECTED] Cannot execute P2P link: {req.source_satellite_id} or {req.destination_satellite_id} is OFFLINE")
         return {
             "success": False,
             "error": "P2P connection failed: One or both satellites are OFFLINE",
@@ -252,7 +266,9 @@ async def send_p2p_message(req: P2PSendRequest, db: AsyncSession = Depends(get_d
     faults = fault_simulator.get_node_faults(req.source_satellite_id)
     for f in faults:
         if f["fault_type"] == "HIGH_LATENCY":
-            await asyncio.sleep(f["parameters"].get("latency_ms", 500) / 1000.0)
+            delay_ms = f["parameters"].get("latency_ms", 500)
+            logger.info(f"[FAULT EFFECT] Target={req.source_satellite_id} | Communication delay applied: {delay_ms}ms")
+            await asyncio.sleep(delay_ms / 1000.0)
 
     # Instruct Source Satellite to perform direct P2P transmission to Destination Satellite
     import httpx
@@ -265,6 +281,7 @@ async def send_p2p_message(req: P2PSendRequest, db: AsyncSession = Depends(get_d
         "message_type": req.message_type,
         "payload": req.payload
     }
+    logger.info(f"[P2P TRIGGER] Mission Control → {req.source_satellite_id} | trigger_url={source_trigger_url} | target_dest={req.destination_satellite_id}")
 
     try:
         async with httpx.AsyncClient(timeout=4.0) as client:
@@ -283,12 +300,14 @@ async def send_p2p_message(req: P2PSendRequest, db: AsyncSession = Depends(get_d
                     "relay_status": "DIRECT_SATELLITE_TO_SATELLITE (No Mission Control Relay)",
                     "response": sat_res.get("ack_response")
                 }
+                logger.info(f"[P2P RESULT] Mission Control ← {req.source_satellite_id} | status=SUCCESS | direct_link={sat_res.get('direct_link')} | latency={latency}ms")
             else:
                 p2p_result = {
                     "success": False,
                     "error": f"Source satellite returned status {resp.status_code}",
                     "latency_ms": latency
                 }
+                logger.error(f"[P2P ERROR] Mission Control ← {req.source_satellite_id} | status=FAILED | http_status={resp.status_code} | latency={latency}ms")
     except Exception as ex:
         latency = round((time.time() - start_time) * 1000, 2)
         p2p_result = {
@@ -298,6 +317,7 @@ async def send_p2p_message(req: P2PSendRequest, db: AsyncSession = Depends(get_d
             "destination": req.destination_satellite_id,
             "latency_ms": latency
         }
+        logger.error(f"[P2P ERROR] Mission Control ← {req.source_satellite_id} | status=FAILED | error={ex} | latency={latency}ms")
 
     # Persist P2P event log
     evt = CommunicationEvent(
@@ -312,17 +332,21 @@ async def send_p2p_message(req: P2PSendRequest, db: AsyncSession = Depends(get_d
     )
     db.add(evt)
     await db.commit()
+    logger.info(f"[DATABASE AUDIT] Persisted CommunicationEvent | event_id={evt.event_id} | protocol=P2P | status={evt.status}")
 
     await websocket_manager.broadcast({
         "event_type": "P2P_MESSAGE_DELIVERED",
         "result": p2p_result,
         "timestamp": time.time()
     })
+    logger.info(f"[HTTP API RESULT] Mission Control → Frontend | endpoint=/api/p2p/send | status={'SUCCESS' if p2p_result['success'] else 'FAILED'}")
     return p2p_result
 
 @app.post("/api/webrtc/offer")
 async def handle_webrtc_offer(req: WebRTCOfferRequest):
+    logger.info(f"[WEBRTC SIGNALING] Frontend → Mission Control | event=SDP_OFFER | peer={req.peer}")
     res = webrtc_manager.process_offer(offer_sdp=req.offer_sdp, peer=req.peer)
+    logger.info(f"[WEBRTC SIGNALING] Mission Control → Frontend | event=SDP_ANSWER | session_id={res['session_id']} | state={res['state']}")
     await websocket_manager.broadcast({
         "event_type": "WEBRTC_CONNECTED",
         "session": res,
@@ -332,7 +356,9 @@ async def handle_webrtc_offer(req: WebRTCOfferRequest):
 
 @app.post("/api/webrtc/ice-candidate")
 async def add_ice_candidate(req: WebRTCICECandidateRequest):
+    logger.info(f"[WEBRTC SIGNALING] Frontend → Mission Control | event=ICE_CANDIDATE | session_id={req.session_id}")
     ok = webrtc_manager.add_ice_candidate(req.session_id, req.candidate)
+    logger.info(f"[WEBRTC SIGNALING] Mission Control → Frontend | event=ICE_CANDIDATE | session_id={req.session_id} | status={'ACCEPTED' if ok else 'REJECTED'}")
     return {"success": ok}
 
 @app.get("/api/webrtc/status")
@@ -343,6 +369,7 @@ async def get_webrtc_status():
 
 @app.post("/api/faults/inject")
 async def inject_fault(req: FaultInjectRequest):
+    logger.info(f"[FAULT INJECTION] Frontend → Mission Control | target={req.target_node} | fault_type={req.fault_type} | params={req.parameters}")
     record = fault_simulator.inject_fault(
         fault_type=req.fault_type,
         target_node=req.target_node,
@@ -357,7 +384,10 @@ async def inject_fault(req: FaultInjectRequest):
 
 @app.post("/api/faults/clear")
 async def clear_faults(target_node: Optional[str] = Query(None)):
+    target_str = target_node or "ALL_NODES"
+    logger.info(f"[FAULT CLEAR] Frontend → Mission Control | target={target_str}")
     cleared = fault_simulator.clear_faults(target_node)
+    logger.info(f"[FAULT CLEAR RESULT] Mission Control | target={target_str} | cleared_count={cleared}")
     await websocket_manager.broadcast({
         "event_type": "FAULTS_CLEARED",
         "target_node": target_node,
@@ -393,6 +423,7 @@ async def get_observatory_stats():
 
 @app.post("/api/election/ring")
 async def trigger_ring_election(initiator_id: str = Query("SAT-01"), db: AsyncSession = Depends(get_db)):
+    logger.info(f"[ELECTION API] Frontend → Mission Control | endpoint=/api/election/ring | initiator={initiator_id} | protocol=Ring Leader Election")
     result = global_registry.run_ring_election(initiator_id=initiator_id)
     
     evt = CommunicationEvent(
@@ -407,12 +438,14 @@ async def trigger_ring_election(initiator_id: str = Query("SAT-01"), db: AsyncSe
     )
     db.add(evt)
     await db.commit()
+    logger.info(f"[DATABASE AUDIT] Persisted CommunicationEvent | event_id={evt.event_id} | protocol=Ring Leader Election | status=SUCCESS")
 
     await websocket_manager.broadcast({
         "event_type": "LEADER_ELECTION_COMPLETED",
         "result": result,
         "timestamp": time.time()
     })
+    logger.info(f"[ELECTION RESULT] Mission Control → Frontend | initiator={initiator_id} | leader_elected={result['current_leader']} | participating={result['participating_nodes']} | latency={result['latency_ms']}ms")
     return result
 
 # ------------------- SYSTEM HEALTH & WEBSOCKET STREAM -------------------

@@ -1,7 +1,10 @@
 import time
 import asyncio
+import logging
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, asdict
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class SatelliteRegistration:
@@ -147,6 +150,8 @@ class SatelliteRegistry:
         start_idx = all_ring_nodes.index(initiator_id)
         ordered_ring = all_ring_nodes[start_idx:] + all_ring_nodes[:start_idx]
 
+        logger.info(f"[RING ELECTION] Election initiated by {initiator_id} | Logical ring path: {' -> '.join(ordered_ring)}")
+
         visited_active = []
         bypassed_failed = []
         election_trace = []
@@ -178,6 +183,8 @@ class SatelliteRegistry:
         self.current_leader = winner
         duration_ms = round((time.time() - start_time) * 1000, 2)
         event_id = f"EVT-ELECT-{int(time.time() * 1000)}"
+
+        logger.info(f"[RING ELECTION COMPLETED] Winner Leader={winner} | Participated={visited_active} | Bypassed Offline={bypassed_failed} | Latency={duration_ms}ms")
 
         return {
             "event_id": event_id,

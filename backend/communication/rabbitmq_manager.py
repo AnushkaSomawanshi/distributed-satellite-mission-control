@@ -45,10 +45,12 @@ class RabbitMQManager:
 
     async def publish_telemetry(self, telemetry_data: Dict[str, Any]):
         self.published_message_count += 1
+        producer = telemetry_data.get("satellite_id", "SAT-UNKNOWN")
+        msg_id = f"msg-{self.published_message_count}-{int(time.time()*1000)}"
         payload = {
-            "message_id": f"msg-{self.published_message_count}-{int(time.time()*1000)}",
+            "message_id": msg_id,
             "type": "TELEMETRY",
-            "producer": telemetry_data.get("satellite_id", "SAT-UNKNOWN"),
+            "producer": producer,
             "data": telemetry_data,
             "timestamp": time.time(),
             "broker_mode": "RABBITMQ" if self.connected else "IN_MEMORY_EVENT_BUS"
@@ -63,11 +65,13 @@ class RabbitMQManager:
                     delivery_mode=aio_pika.DeliveryMode.PERSISTENT
                 )
                 await exchange.publish(message, routing_key="")
+                logger.info(f"[RABBITMQ PUBLISH] producer={producer} | exchange=telemetry.exchange | msg_id={msg_id} | status=SENT")
                 return payload
             except Exception as ex:
-                logger.error(f"Error publishing to RabbitMQ: {ex}")
+                logger.error(f"[RABBITMQ ERROR] Failed to publish message to RabbitMQ: {ex}")
         
         # Fallback to in-memory async queue
+        logger.info(f"[RABBITMQ PUBLISH IN-MEMORY] producer={producer} | queue=in_memory_event_bus | msg_id={msg_id} | status=QUEUED")
         await self.in_memory_queue.put(payload)
         return payload
 
@@ -76,6 +80,9 @@ class RabbitMQManager:
 
     async def _notify_listeners(self, message_payload: Dict[str, Any]):
         self.consumed_message_count += 1
+        producer = message_payload.get("producer") or message_payload.get("data", {}).get("satellite_id", "SAT-UNKNOWN")
+        msg_id = message_payload.get("message_id", "UNKNOWN")
+        logger.info(f"[RABBITMQ CONSUME] consumer=Mission Control | producer={producer} | msg_id={msg_id} | status=RECEIVED")
         for listener in self.listeners:
             try:
                 if asyncio.iscoroutinefunction(listener):
@@ -83,7 +90,7 @@ class RabbitMQManager:
                 else:
                     listener(message_payload)
             except Exception as err:
-                logger.error(f"Error in telemetry consumer listener: {err}")
+                logger.error(f"[RABBITMQ CONSUMER ERROR] Exception in consumer callback: {err}")
 
     async def _start_consumer(self, queue):
         async with queue.iterator() as queue_iter:

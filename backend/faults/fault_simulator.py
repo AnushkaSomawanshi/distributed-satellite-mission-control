@@ -75,7 +75,7 @@ class FaultSimulator:
                 reg.health_score = 65.0
                 reg.status = "WARNING"
 
-        logger.info(f"Injected fault {fault_type} on target {target_node}")
+        logger.info(f"[FAULT APPLIED] Target={target_node} | Fault={fault_type} | Params={params} | Status={reg.status if reg else 'UNKNOWN'}")
         return fault_record
 
     def clear_faults(self, target_node: Optional[str] = None) -> int:
@@ -98,6 +98,7 @@ class FaultSimulator:
         for fid in to_remove:
             del self.active_faults[fid]
 
+        logger.info(f"[FAULT CLEAR APPLIED] Target={target_node or 'ALL_NODES'} | ClearedCount={cleared_count}")
         return cleared_count
 
     def get_node_faults(self, node_id: str) -> List[Dict[str, Any]]:

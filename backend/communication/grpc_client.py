@@ -35,20 +35,27 @@ class GRPCClientManager:
         start_time = time.time()
         reg = self.registry.lookup(target_satellite_id)
         if not reg:
+            err_msg = f"Target {target_satellite_id} not in registry"
+            logger.warning(f"[gRPC REJECTED] Mission Control → {target_satellite_id} | method={method_name} | status=REJECTED | reason={err_msg}")
             return {
                 "success": False,
-                "error": f"Target {target_satellite_id} not in registry",
+                "error": err_msg,
                 "latency_ms": round((time.time() - start_time) * 1000, 2),
                 "timestamp": time.time()
             }
 
         if reg.status == "OFFLINE":
+            err_msg = f"Target {target_satellite_id} is OFFLINE"
+            logger.warning(f"[gRPC REJECTED] Mission Control → {target_satellite_id} | method={method_name} | status=REJECTED | reason={err_msg}")
             return {
                 "success": False,
-                "error": f"Target {target_satellite_id} is OFFLINE",
+                "error": err_msg,
                 "latency_ms": round((time.time() - start_time) * 1000, 2),
                 "timestamp": time.time()
             }
+
+        target_endpoint = f"{reg.address}:{reg.grpc_port}"
+        logger.info(f"[gRPC OUT] Mission Control → {target_satellite_id} | method={method_name} | target={target_endpoint} | protocol=gRPC | status=SENT")
 
         try:
             # Dynamically import generated proto or fallback to HTTP RPC endpoint
@@ -56,7 +63,6 @@ class GRPCClientManager:
                 import proto.satellite_pb2 as pb2
                 import proto.satellite_pb2_grpc as pb2_grpc
                 
-                target_endpoint = f"{reg.address}:{reg.grpc_port}"
                 async with grpc.aio.insecure_channel(target_endpoint) as channel:
                     stub = pb2_grpc.SatelliteServiceStub(channel)
                     
@@ -64,6 +70,7 @@ class GRPCClientManager:
                         req = pb2.HealthRequest(caller_id="MissionControl", timestamp=int(time.time()))
                         res = await asyncio.wait_for(stub.GetHealth(req), timeout=timeout)
                         latency = round((time.time() - start_time) * 1000, 2)
+                        logger.info(f"[gRPC RESULT] Mission Control ← {target_satellite_id} | method=GetHealth | status=SUCCESS | latency={latency}ms")
                         return {
                             "success": True,
                             "method": "GetHealth",
@@ -86,6 +93,7 @@ class GRPCClientManager:
                         req = pb2.PingRequest(sender_id="MissionControl", timestamp=int(time.time() * 1000))
                         res = await asyncio.wait_for(stub.Ping(req), timeout=timeout)
                         latency = round((time.time() - start_time) * 1000, 2)
+                        logger.info(f"[gRPC RESULT] Mission Control ← {target_satellite_id} | method=Ping | status=SUCCESS | latency={latency}ms")
                         return {
                             "success": True,
                             "method": "Ping",
@@ -102,6 +110,7 @@ class GRPCClientManager:
                         req = pb2.InfoRequest(caller_id="MissionControl")
                         res = await asyncio.wait_for(stub.GetSatelliteInfo(req), timeout=timeout)
                         latency = round((time.time() - start_time) * 1000, 2)
+                        logger.info(f"[gRPC RESULT] Mission Control ← {target_satellite_id} | method=GetSatelliteInfo | status=SUCCESS | latency={latency}ms")
                         return {
                             "success": True,
                             "method": "GetSatelliteInfo",
@@ -122,10 +131,12 @@ class GRPCClientManager:
                 # Fallback to direct HTTP RPC bridge endpoint exposed by satellite node
                 import httpx
                 http_target = f"http://{reg.address}:{reg.p2p_port + 1000}/rpc/{method_name}"
+                logger.info(f"[gRPC OUT FALLBACK] Mission Control → {target_satellite_id} | method={method_name} | target={http_target} | protocol=HTTP_RPC | status=SENT")
                 async with httpx.AsyncClient(timeout=timeout) as client:
                     resp = await client.post(http_target, json=payload or {})
                     latency = round((time.time() - start_time) * 1000, 2)
                     if resp.status_code == 200:
+                        logger.info(f"[gRPC RESULT] Mission Control ← {target_satellite_id} | method={method_name} | status=SUCCESS (HTTP Fallback) | latency={latency}ms")
                         return {
                             "success": True,
                             "method": method_name,
@@ -135,6 +146,7 @@ class GRPCClientManager:
                             "timestamp": time.time()
                         }
                     else:
+                        logger.error(f"[gRPC ERROR] Mission Control ← {target_satellite_id} | method={method_name} | status=FAILED | error=HTTP {resp.status_code} | latency={latency}ms")
                         return {
                             "success": False,
                             "error": f"HTTP gRPC fallback returned status {resp.status_code}",
@@ -142,16 +154,20 @@ class GRPCClientManager:
                             "timestamp": time.time()
                         }
         except asyncio.TimeoutError:
+            latency = round((time.time() - start_time) * 1000, 2)
+            logger.error(f"[gRPC ERROR] Mission Control ← {target_satellite_id} | method={method_name} | status=TIMEOUT | latency={latency}ms")
             return {
                 "success": False,
                 "error": f"RPC call to {target_satellite_id} timed out after {timeout}s",
-                "latency_ms": round((time.time() - start_time) * 1000, 2),
+                "latency_ms": latency,
                 "timestamp": time.time()
             }
         except Exception as e:
+            latency = round((time.time() - start_time) * 1000, 2)
+            logger.error(f"[gRPC ERROR] Mission Control ← {target_satellite_id} | method={method_name} | status=FAILED | error={e} | latency={latency}ms")
             return {
                 "success": False,
                 "error": str(e),
-                "latency_ms": round((time.time() - start_time) * 1000, 2),
+                "latency_ms": latency,
                 "timestamp": time.time()
             }

@@ -31,6 +31,13 @@ class ConnectionManager:
 
         self.total_messages_sent += 1
         payload_str = json.dumps(data)
+        event_type = data.get("event_type", "UNKNOWN")
+
+        if event_type != "TELEMETRY_UPDATED":
+            sat_id = data.get("satellite_id") or data.get("fault", {}).get("target_node") or "SYSTEM"
+            logger.info(f"[WEBSOCKET BROADCAST] event_type={event_type} | target={sat_id} | active_clients={len(self.active_connections)}")
+        else:
+            logger.debug(f"[WEBSOCKET BROADCAST] event_type=TELEMETRY_UPDATED | active_clients={len(self.active_connections)}")
 
         disconnected_clients = []
         for connection in self.active_connections:

@@ -176,7 +176,8 @@ if HAS_GRPC:
             self.node = node
 
         async def GetHealth(self, request, context):
-            return pb2.HealthResponse(
+            logger.info(f"[gRPC IN] {self.node.satellite_id} ← Mission Control | method=GetHealth | status=REQUEST_RECEIVED")
+            resp = pb2.HealthResponse(
                 satellite_id=self.node.satellite_id,
                 status=self.node.status,
                 health_score=self.node.calculate_health_score(),
@@ -188,17 +189,23 @@ if HAS_GRPC:
                 uptime_seconds=int(time.time() - self.node.start_time),
                 timestamp=int(time.time())
             )
+            logger.info(f"[gRPC OUT] {self.node.satellite_id} → Mission Control | method=GetHealth | status=SUCCESS")
+            return resp
 
         async def Ping(self, request, context):
-            return pb2.PingResponse(
+            logger.info(f"[gRPC IN] {self.node.satellite_id} ← Mission Control | method=Ping | status=REQUEST_RECEIVED")
+            resp = pb2.PingResponse(
                 satellite_id=self.node.satellite_id,
                 status="PONG",
                 echo_timestamp=request.timestamp,
                 response_timestamp=int(time.time() * 1000)
             )
+            logger.info(f"[gRPC OUT] {self.node.satellite_id} → Mission Control | method=Ping | status=SUCCESS")
+            return resp
 
         async def GetSatelliteInfo(self, request, context):
-            return pb2.InfoResponse(
+            logger.info(f"[gRPC IN] {self.node.satellite_id} ← Mission Control | method=GetSatelliteInfo | status=REQUEST_RECEIVED")
+            resp = pb2.InfoResponse(
                 satellite_id=self.node.satellite_id,
                 node_id=self.node.node_id,
                 hostname=self.node.hostname,
@@ -208,11 +215,14 @@ if HAS_GRPC:
                 status=self.node.status,
                 start_time=int(self.node.start_time)
             )
+            logger.info(f"[gRPC OUT] {self.node.satellite_id} → Mission Control | method=GetSatelliteInfo | status=SUCCESS")
+            return resp
 
         async def SendP2PMessage(self, request, context):
             start_t = time.time()
+            logger.info(f"[gRPC IN] {self.node.satellite_id} ← {request.source_satellite_id} | method=SendP2PMessage | status=REQUEST_RECEIVED")
             logger.info(f"[{self.node.satellite_id} gRPC P2P] Received message directly from {request.source_satellite_id}: {request.payload}")
-            return pb2.P2PResponse(
+            resp = pb2.P2PResponse(
                 message_id=request.message_id,
                 receiver_satellite_id=self.node.satellite_id,
                 acknowledged=True,
@@ -220,6 +230,8 @@ if HAS_GRPC:
                 received_timestamp=int(time.time()),
                 processing_delay_ms=round((time.time() - start_t) * 1000, 2)
             )
+            logger.info(f"[gRPC OUT] {self.node.satellite_id} → {request.source_satellite_id} | method=SendP2PMessage | status=SUCCESS")
+            return resp
 
 # FastP2P HTTP Direct Satellite-to-Satellite Service
 def create_satellite_p2p_app(node: SatelliteNode) -> FastAPI:
