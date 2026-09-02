@@ -49,8 +49,14 @@ export default function Header({ systemHealth, wsConnected }) {
           <Radio className={`w-4 h-4 ${wsConnected ? 'text-emerald-400 animate-pulse' : 'text-amber-400'}`} />
           <span className="text-slate-400">WebSocket Stream:</span>
           <span className={`font-bold ${wsConnected ? 'text-emerald-400' : 'text-amber-400'}`}>
-            {wsConnected ? 'LIVE (10 msg/s)' : 'CONNECTING...'}
+            {wsConnected ? 'CONNECTED' : 'CONNECTING...'}
           </span>
+        </div>
+
+        <div className="flex items-center space-x-2 bg-slate-900/80 border border-slate-800 px-3 py-1.5 rounded-lg">
+          <ShieldCheck className="w-4 h-4 text-cyan-400" />
+          <span className="text-slate-400">Current Leader:</span>
+          <span className="font-bold text-cyan-300 font-orbitron">{systemHealth?.current_leader || 'SAT-05'}</span>
         </div>
 
         <div className="flex items-center space-x-2 bg-slate-900/80 border border-slate-800 px-3 py-1.5 rounded-lg">

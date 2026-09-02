@@ -105,7 +105,7 @@ class SatelliteNode:
             "timestamp": time.time()
         }
 
-    async def register_with_mission_control(self):
+    async def register_with_mission_control(self) -> bool:
         url = f"{self.registry_url}/api/satellites/register"
         payload = {
             "satellite_id": self.satellite_id,
@@ -121,10 +121,13 @@ class SatelliteNode:
                 resp = await client.post(url, json=payload)
                 if resp.status_code == 200:
                     logger.info(f"Dynamic Registration SUCCESS: {self.satellite_id} registered with Mission Control.")
+                    self.is_registered = True
+                    return True
                 else:
                     logger.warning(f"Registration returned status {resp.status_code}: {resp.text}")
         except Exception as e:
             logger.warning(f"Could not connect to Mission Control Registry at {url}: {e}. Retrying in background.")
+        return False
 
     async def send_heartbeat(self):
         url = f"{self.registry_url}/api/satellites/heartbeat"
@@ -149,7 +152,12 @@ class SatelliteNode:
             pass
 
     async def start_autonomous_loop(self):
-        await self.register_with_mission_control()
+        # Guarantee registration retry until Mission Control acknowledges registration
+        while not getattr(self, 'is_registered', False):
+            success = await self.register_with_mission_control()
+            if not success:
+                await asyncio.sleep(2.0)
+
         while True:
             try:
                 self.step_telemetry()

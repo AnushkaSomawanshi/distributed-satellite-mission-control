@@ -159,6 +159,23 @@ async def receive_heartbeat(req: HeartbeatRequest):
         p2p_port=req.p2p_port
     )
     
+    # Broadcast telemetry update over WebSocket
+    await websocket_manager.broadcast({
+        "event_type": "TELEMETRY_UPDATED",
+        "telemetry": {
+            "satellite_id": req.satellite_id,
+            "battery": req.battery,
+            "temperature": req.temperature,
+            "cpu_usage": req.cpu_usage,
+            "memory_usage": req.memory_usage,
+            "signal_strength": req.signal_strength,
+            "health_score": score,
+            "status": status,
+            "timestamp": time.time()
+        },
+        "timestamp": time.time()
+    })
+    
     return {
         "status": "SUCCESS",
         "satellite_id": req.satellite_id,
@@ -372,6 +389,32 @@ async def get_observatory_stats():
         "active_faults_count": len(fault_simulator.get_all_active_faults())
     }
 
+# ------------------- RING LEADER ELECTION REST API -------------------
+
+@app.post("/api/election/ring")
+async def trigger_ring_election(initiator_id: str = Query("SAT-01"), db: AsyncSession = Depends(get_db)):
+    result = global_registry.run_ring_election(initiator_id=initiator_id)
+    
+    evt = CommunicationEvent(
+        event_id=result["event_id"],
+        source=initiator_id,
+        destination=result["current_leader"],
+        protocol="Ring Leader Election",
+        method="RING_CIRCULATE",
+        latency_ms=result["latency_ms"],
+        status="SUCCESS",
+        payload_summary=f"Leader Elected: {result['current_leader']} (Participated: {len(result['participating_nodes'])})"
+    )
+    db.add(evt)
+    await db.commit()
+
+    await websocket_manager.broadcast({
+        "event_type": "LEADER_ELECTION_COMPLETED",
+        "result": result,
+        "timestamp": time.time()
+    })
+    return result
+
 # ------------------- SYSTEM HEALTH & WEBSOCKET STREAM -------------------
 
 @app.get("/api/health")
@@ -386,6 +429,7 @@ async def system_health():
         "status": "HEALTHY" if offline_count == 0 else "DEGRADED",
         "mission_control": "HEALTHY",
         "rabbitmq": "HEALTHY" if rabbitmq_manager.connected else "IN_MEMORY_FALLBACK",
+        "current_leader": global_registry.current_leader,
         "satellites": {
             "total": len(satellites),
             "healthy": healthy_count,

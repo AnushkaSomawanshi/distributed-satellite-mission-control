@@ -103,12 +103,12 @@ const demoScenarios = [
   },
   {
     id: 12,
-    title: 'DEMO 12: Network Latency Degradation',
-    concept: 'Fault Simulation & Performance Metrics',
-    desc: 'Injects 500ms network latency onto SAT-01 to demonstrate measured RPC/P2P response degradation.',
-    endpoint: 'POST /api/faults/inject (HIGH_LATENCY)',
-    codeLoc: 'backend/faults/fault_simulator.py -> FaultSimulator',
-    action: 'INJECT_LATENCY'
+    title: 'DEMO 12: Ring Leader Election Algorithm',
+    concept: 'Distributed Leader Election (Highest Active ID Wins)',
+    desc: 'Circulates election message around active satellite ring topology (SAT-01 -> SAT-02 -> SAT-03 -> SAT-04 -> SAT-05), bypassing failed nodes to elect new constellation leader.',
+    endpoint: 'POST /api/election/ring',
+    codeLoc: 'backend/registry/service_registry.py -> run_ring_election()',
+    action: 'RING_ELECTION'
   },
   {
     id: 13,
@@ -175,6 +175,10 @@ export default function SystemHealthDemo() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ fault_type: 'HIGH_LATENCY', target_node: 'SAT-01', parameters: { latency_ms: 500 } })
         });
+        const data = await res.json();
+        setActiveResult({ demo: demo.title, endpoint: demo.endpoint, codeLoc: demo.codeLoc, data });
+      } else if (demo.action === 'RING_ELECTION') {
+        const res = await fetch('/api/election/ring?initiator_id=SAT-01', { method: 'POST' });
         const data = await res.json();
         setActiveResult({ demo: demo.title, endpoint: demo.endpoint, codeLoc: demo.codeLoc, data });
       } else if (demo.action === 'INJECT_LOSS') {

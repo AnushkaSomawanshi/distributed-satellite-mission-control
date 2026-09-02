@@ -29,7 +29,29 @@ export default function App() {
     try {
       const res = await fetch('/api/satellites');
       const data = await res.json();
-      setSatellites(data.satellites || []);
+      const satList = data.satellites || [];
+      setSatellites(satList);
+
+      // Seed initial baseline telemetry points if history is empty
+      setTelemetryHistory((prev) => {
+        if (prev.length < 3 && satList.length > 0) {
+          const now = new Date();
+          const basePoints = [];
+          for (let i = 4; i >= 0; i--) {
+            const pointTime = new Date(now.getTime() - i * 3000).toLocaleTimeString();
+            const pt = { time: pointTime };
+            satList.forEach((s) => {
+              pt[`${s.satellite_id}_battery`] = Number(s.battery || 95);
+              pt[`${s.satellite_id}_temp`] = Number(s.temperature || 25);
+              pt[`${s.satellite_id}_cpu`] = Number(s.cpu_usage || 15);
+              pt[`${s.satellite_id}_health`] = Number(s.health_score || 100);
+            });
+            basePoints.push(pt);
+          }
+          return basePoints;
+        }
+        return prev;
+      });
     } catch (e) {}
 
     try {
@@ -73,23 +95,30 @@ export default function App() {
       ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
+          
+          // Instantly sync satellite state across all pages on event broadcasts
+          if (['FAULT_INJECTED', 'FAULTS_CLEARED', 'SATELLITE_STATUS_CHANGED', 'LEADER_ELECTION_COMPLETED', 'HEARTBEAT_TIMEOUT'].includes(msg.event_type)) {
+            fetchSatelliteData();
+          }
+
           if (msg.event_type === 'TELEMETRY_UPDATED') {
-            const telemetry = msg.telemetry?.data || {};
+            const telemetry = msg.telemetry?.data || msg.telemetry || {};
             const satId = telemetry.satellite_id;
             if (satId) {
               const timeStr = new Date().toLocaleTimeString();
               setTelemetryHistory((prev) => {
-                const next = [...prev];
-                const lastPoint = next[next.length - 1] || { time: timeStr };
+                const lastPoint = prev.length > 0 ? { ...prev[prev.length - 1] } : {};
                 const newPoint = {
                   ...lastPoint,
                   time: timeStr,
-                  [`${satId}_battery`]: telemetry.battery,
-                  [`${satId}_temp`]: telemetry.temperature,
-                  [`${satId}_cpu`]: telemetry.cpu_usage
+                  [`${satId}_battery`]: Number(telemetry.battery),
+                  [`${satId}_temp`]: Number(telemetry.temperature),
+                  [`${satId}_cpu`]: Number(telemetry.cpu_usage),
+                  [`${satId}_health`]: Number(telemetry.health_score || 100)
                 };
-                if (next.length > 20) next.shift();
-                return [...next, newPoint];
+                const next = [...prev, newPoint];
+                if (next.length > 35) next.shift(); // 35 sample rolling window
+                return next;
               });
             }
           }

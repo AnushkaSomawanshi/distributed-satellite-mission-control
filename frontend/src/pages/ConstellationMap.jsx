@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Satellite, Radio, Zap, ShieldCheck, AlertCircle } from 'lucide-react';
+import { Satellite, Radio, Zap, ShieldCheck, AlertCircle, ShieldAlert } from 'lucide-react';
 
 export default function ConstellationMap({ satellites = [] }) {
   const [selectedSat, setSelectedSat] = useState(null);
@@ -14,9 +14,9 @@ export default function ConstellationMap({ satellites = [] }) {
   };
 
   const links = [
-    { from: 'SAT-01', to: 'SAT-02', label: 'P2P Cross-link' },
-    { from: 'SAT-01', to: 'SAT-03', label: 'P2P Cross-link' },
-    { from: 'SAT-02', to: 'SAT-04', label: 'P2P Cross-link' },
+    { from: 'SAT-01', to: 'SAT-02', label: 'P2P Link' },
+    { from: 'SAT-01', to: 'SAT-03', label: 'P2P Link' },
+    { from: 'SAT-02', to: 'SAT-04', label: 'P2P Link' },
     { from: 'SAT-03', to: 'SAT-05', label: 'P2P Link' },
     { from: 'SAT-04', to: 'SAT-05', label: 'P2P Link' }
   ];
@@ -38,14 +38,40 @@ export default function ConstellationMap({ satellites = [] }) {
     };
   };
 
+  const sat02Status = getSatStatus('SAT-02');
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-6 pb-12">
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
         <div>
-          <h2 className="text-xl font-bold text-slate-100 font-orbitron">Constellation Topology & Network Graph</h2>
-          <p className="text-xs text-slate-400 font-mono">Live LEO Satellite Nodes & Inter-Satellite P2P Links</p>
+          <h2 className="text-xl font-bold text-slate-100 font-orbitron text-cyan-400">
+            Constellation Topology & Network Graph
+          </h2>
+          <p className="text-xs text-slate-400 font-mono mt-1">Live LEO Satellite Nodes & Direct Inter-Satellite P2P Links</p>
+        </div>
+
+        <div className="flex items-center space-x-3 font-mono text-xs">
+          <span className="flex items-center space-x-1 text-emerald-400 font-bold">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 inline-block mr-1"></span> ONLINE NODE
+          </span>
+          <span className="flex items-center space-x-1 text-rose-400 font-bold">
+            <span className="w-2.5 h-2.5 rounded-full bg-rose-500 inline-block mr-1"></span> OFFLINE / BYPASSED
+          </span>
         </div>
       </div>
+
+      {sat02Status === 'OFFLINE' && (
+        <div className="p-4 bg-rose-500/10 border border-rose-500/30 rounded-2xl flex items-center justify-between text-xs font-mono text-rose-300">
+          <div className="flex items-center space-x-2">
+            <ShieldAlert className="w-5 h-5 text-rose-400 shrink-0" />
+            <div>
+              <strong className="font-orbitron text-rose-200">RING ELECTION TOPOLOGY BYPASS ACTIVE</strong>
+              <p className="text-[11px] text-rose-400">Node SAT-02 is OFFLINE. Active Ring Election route automatically bypasses SAT-02: SAT-01 ➔ SAT-03 ➔ SAT-04 ➔ SAT-05 ➔ SAT-01.</p>
+            </div>
+          </div>
+          <span className="px-2.5 py-1 bg-rose-500/20 rounded font-bold">BYPASSED</span>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Interactive SVG Canvas */}
@@ -53,6 +79,17 @@ export default function ConstellationMap({ satellites = [] }) {
           <svg className="w-full h-full absolute inset-0" viewBox="0 0 700 550">
             {/* Orbital Ring Background */}
             <ellipse cx="350" cy="300" rx="280" ry="200" fill="none" stroke="#1e293b" strokeWidth="2" strokeDasharray="6 6" />
+
+            {/* Dynamic Bypass Ring Route if SAT-02 is offline */}
+            {sat02Status === 'OFFLINE' && (
+              <path
+                d="M 200 150 Q 350 180 150 350"
+                fill="none"
+                stroke="#f43f5e"
+                strokeWidth="2.5"
+                strokeDasharray="4 4"
+              />
+            )}
 
             {/* P2P Links */}
             {links.map((link, idx) => {
@@ -69,10 +106,10 @@ export default function ConstellationMap({ satellites = [] }) {
                     y1={p1.y}
                     x2={p2.x}
                     y2={p2.y}
-                    stroke={isOffline ? '#475569' : '#06b6d4'}
+                    stroke={isOffline ? '#f43f5e' : '#06b6d4'}
                     strokeWidth={isOffline ? '1.5' : '2'}
                     strokeDasharray={isOffline ? '4 4' : 'none'}
-                    opacity={isOffline ? 0.4 : 0.7}
+                    opacity={isOffline ? 0.3 : 0.7}
                   />
                   {!isOffline && (
                     <circle r="4" fill="#38bdf8">
@@ -103,9 +140,9 @@ export default function ConstellationMap({ satellites = [] }) {
                 >
                   <circle
                     r="24"
-                    fill={isOffline ? '#1e293b' : '#0f172a'}
+                    fill={isOffline ? '#18181b' : '#0f172a'}
                     stroke={
-                      isOffline ? '#64748b' :
+                      isOffline ? '#f43f5e' :
                       data.status === 'WARNING' ? '#f59e0b' :
                       data.status === 'CRITICAL' ? '#ef4444' : '#06b6d4'
                     }
@@ -115,7 +152,7 @@ export default function ConstellationMap({ satellites = [] }) {
                   <text
                     y="5"
                     textAnchor="middle"
-                    fill="#f8fafc"
+                    fill={isOffline ? '#f43f5e' : '#f8fafc'}
                     fontSize="11"
                     fontWeight="bold"
                     fontFamily="Orbitron"
@@ -125,11 +162,12 @@ export default function ConstellationMap({ satellites = [] }) {
                   <text
                     y="40"
                     textAnchor="middle"
-                    fill="#94a3b8"
+                    fill={isOffline ? '#f43f5e' : '#94a3b8'}
                     fontSize="10"
+                    fontWeight={isOffline ? 'bold' : 'normal'}
                     fontFamily="JetBrains Mono"
                   >
-                    {satId}
+                    {isOffline ? `${satId} (OFFLINE)` : satId}
                   </text>
                 </g>
               );
@@ -138,42 +176,44 @@ export default function ConstellationMap({ satellites = [] }) {
         </div>
 
         {/* Node Inspector Panel */}
-        <div className="glass-panel p-6 rounded-2xl border border-slate-800 space-y-4">
-          <h3 className="text-base font-bold text-slate-200 font-orbitron">Node Inspector</h3>
+        <div className="glass-panel p-6 rounded-2xl border border-slate-800 space-y-4 font-mono">
+          <h3 className="text-base font-bold text-slate-200 font-orbitron text-cyan-400">Node Inspector</h3>
           {selectedSat ? (
-            <div className="space-y-4 font-mono text-xs">
-              <div className="p-4 bg-slate-900/80 border border-cyan-500/30 rounded-xl space-y-2">
+            <div className="space-y-4 text-xs">
+              <div className="p-4 bg-slate-900/90 border border-cyan-500/30 rounded-xl space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-cyan-400 font-bold font-orbitron text-sm">{selectedSat.satellite_id}</span>
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                    selectedSat.status === 'HEALTHY' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'
+                  <span className={`px-2.5 py-1 rounded text-[10px] font-bold ${
+                    selectedSat.status === 'HEALTHY' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300 font-bold'
                   }`}>
                     {selectedSat.status}
                   </span>
                 </div>
-                <div className="text-slate-400 text-[11px]">Node ID: {selectedSat.node_id}</div>
+                <div className="text-slate-400 text-[11px]">Node ID: {selectedSat.node_id || `NODE-${selectedSat.satellite_id}`}</div>
               </div>
 
               <div className="space-y-2">
-                <div className="flex justify-between py-1 border-b border-slate-800">
+                <div className="flex justify-between py-1.5 border-b border-slate-800">
                   <span className="text-slate-400">gRPC Port:</span>
-                  <span className="text-slate-200">{selectedSat.grpc_port}</span>
+                  <span className="text-cyan-300 font-mono">:{selectedSat.grpc_port}</span>
                 </div>
-                <div className="flex justify-between py-1 border-b border-slate-800">
+                <div className="flex justify-between py-1.5 border-b border-slate-800">
                   <span className="text-slate-400">P2P Port:</span>
-                  <span className="text-slate-200">{selectedSat.p2p_port}</span>
+                  <span className="text-indigo-300 font-mono">:{selectedSat.p2p_port}</span>
                 </div>
-                <div className="flex justify-between py-1 border-b border-slate-800">
+                <div className="flex justify-between py-1.5 border-b border-slate-800">
                   <span className="text-slate-400">Health Score:</span>
-                  <span className="text-emerald-400 font-bold">{selectedSat.health_score}%</span>
+                  <span className={selectedSat.status === 'OFFLINE' ? 'text-rose-400 font-bold' : 'text-emerald-400 font-bold'}>
+                    {selectedSat.status === 'OFFLINE' ? '0%' : `${selectedSat.health_score || 100}%`}
+                  </span>
                 </div>
-                <div className="flex justify-between py-1 border-b border-slate-800">
+                <div className="flex justify-between py-1.5 border-b border-slate-800">
                   <span className="text-slate-400">Battery Level:</span>
-                  <span className="text-slate-200">{selectedSat.battery}%</span>
+                  <span className="text-slate-200">{selectedSat.status === 'OFFLINE' ? 'N/A' : `${selectedSat.battery}%`}</span>
                 </div>
-                <div className="flex justify-between py-1 border-b border-slate-800">
+                <div className="flex justify-between py-1.5 border-b border-slate-800">
                   <span className="text-slate-400">Temperature:</span>
-                  <span className="text-slate-200">{selectedSat.temperature}°C</span>
+                  <span className="text-slate-200">{selectedSat.status === 'OFFLINE' ? 'N/A' : `${selectedSat.temperature}°C`}</span>
                 </div>
               </div>
             </div>

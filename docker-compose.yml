@@ -134,5 +134,7 @@ services:
     container_name: mission-control-frontend
     ports:
       - "3000:3000"
+    environment:
+      - VITE_BACKEND_TARGET=http://mission-control:8000
     depends_on:
       - mission-control

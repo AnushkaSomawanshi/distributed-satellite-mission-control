@@ -27,6 +27,7 @@ class SatelliteRegistry:
         self._registry: Dict[str, SatelliteRegistration] = {}
         self.ttl = heartbeat_ttl_seconds
         self._event_listeners = []
+        self.current_leader: str = "SAT-05"
 
     def register(
         self,
@@ -135,5 +136,62 @@ class SatelliteRegistry:
             d["seconds_since_heartbeat"] = round(now - reg.last_heartbeat, 2)
             res.append(d)
         return res
+
+    def run_ring_election(self, initiator_id: str = "SAT-01") -> Dict[str, Any]:
+        start_time = time.time()
+        all_ring_nodes = ["SAT-01", "SAT-02", "SAT-03", "SAT-04", "SAT-05"]
+        
+        if initiator_id not in all_ring_nodes:
+            initiator_id = "SAT-01"
+
+        start_idx = all_ring_nodes.index(initiator_id)
+        ordered_ring = all_ring_nodes[start_idx:] + all_ring_nodes[:start_idx]
+
+        visited_active = []
+        bypassed_failed = []
+        election_trace = []
+
+        for node_id in ordered_ring:
+            reg = self._registry.get(node_id)
+            is_active = reg and reg.status != "OFFLINE"
+            
+            if is_active:
+                visited_active.append(node_id)
+                election_trace.append({
+                    "step": len(election_trace) + 1,
+                    "from_node": visited_active[-2] if len(visited_active) > 1 else initiator_id,
+                    "to_node": node_id,
+                    "action": "PASSED_ELECTION_MSG",
+                    "highest_candidate": max(visited_active),
+                    "timestamp": round(time.time(), 3)
+                })
+            else:
+                bypassed_failed.append(node_id)
+                election_trace.append({
+                    "step": len(election_trace) + 1,
+                    "node": node_id,
+                    "action": "NODE_OFFLINE_BYPASSED",
+                    "timestamp": round(time.time(), 3)
+                })
+
+        winner = max(visited_active) if visited_active else "NONE"
+        self.current_leader = winner
+        duration_ms = round((time.time() - start_time) * 1000, 2)
+        event_id = f"EVT-ELECT-{int(time.time() * 1000)}"
+
+        return {
+            "event_id": event_id,
+            "status": "SUCCESS",
+            "protocol": "Ring Leader Election (Highest ID Wins)",
+            "initiator": initiator_id,
+            "current_leader": winner,
+            "ring_topology": "SAT-01 -> SAT-02 -> SAT-03 -> SAT-04 -> SAT-05 -> SAT-01",
+            "ring_path": ordered_ring,
+            "participating_nodes": visited_active,
+            "failed_nodes": bypassed_failed,
+            "election_trace": election_trace,
+            "latency_ms": duration_ms,
+            "timestamp": time.time()
+        }
 
 global_registry = SatelliteRegistry()
