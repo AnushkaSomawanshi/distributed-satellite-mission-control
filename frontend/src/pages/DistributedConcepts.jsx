@@ -3,121 +3,166 @@ import { BookOpen, CheckCircle2, Play, Terminal, Zap, Radio, Server, Layers, Cpu
 
 const conceptsList = [
   {
-    id: 'DEF',
+    id: 'INDEPENDENT_NODES',
     unit: 'UNIT 1',
-    title: 'Definition of Distributed Systems',
-    description: 'A collection of autonomous computing entities that communicate over a network to achieve a common goal.',
-    implementation: 'Five independent satellite microservice processes (SAT-01 to SAT-05), each managing local orbit telemetry state.',
+    title: '1. Independent Distributed Satellite Nodes',
+    description: 'Each satellite runs as an autonomous process with local orbital runtime, telemetry generator, and dedicated network ports.',
+    implementation: 'Five containerized satellite services (SAT-01 to SAT-05) running independently in Docker Compose.',
     tech: 'Python Microservices, Docker Containers',
-    demoAction: 'INVOKE_ALL_SATS'
+    demoAction: 'INSPECT_NODES'
   },
   {
-    id: 'GOALS',
+    id: 'SERVICE_DISCOVERY',
     unit: 'UNIT 1',
-    title: 'Goals of Distributed Systems',
-    description: 'Resource sharing, concurrency, scalability, availability, communication, transparency.',
-    implementation: 'Telemetry shared across services, satellites run concurrently, system remains operational when one satellite fails.',
-    tech: 'FastAPI, Dynamic Registry, Health Engine',
-    demoAction: 'CHECK_GOALS'
+    title: '2. Dynamic Service Discovery & Registry',
+    description: 'Satellites self-register on startup, providing node metadata, hostname, gRPC port, and P2P endpoints.',
+    implementation: 'Mission Control Satellite Registry tracks satellite endpoints dynamically without hardcoding.',
+    tech: 'FastAPI Registry, Self-Registration Protocol',
+    demoAction: 'INSPECT_REGISTRY'
   },
   {
-    id: 'TYPES',
+    id: 'GRPC_RPC',
     unit: 'UNIT 1',
-    title: 'Types of Distributed Systems',
-    description: 'Client-Server, Peer-to-Peer, Distributed Information System, Distributed Multimedia System.',
-    implementation: 'React -> Mission Control (Client-Server), SAT-01 -> SAT-04 (P2P), RabbitMQ -> Database (Info System), WebRTC Video (Multimedia).',
-    tech: 'React, gRPC, RabbitMQ, WebRTC',
-    demoAction: 'SHOW_TYPES'
-  },
-  {
-    id: 'ARCH',
-    unit: 'UNIT 1',
-    title: 'Distributed Architecture',
-    description: 'Hybrid architectural style combining layered Mission Control orchestration with direct P2P mesh cross-links.',
-    implementation: 'Layered frontend/backend + P2P cross-links between satellites.',
-    tech: 'FastAPI, HTTP P2P, gRPC Mesh',
-    demoAction: 'SHOW_TOPOLOGY'
-  },
-  {
-    id: 'MIDDLEWARE',
-    unit: 'UNIT 1',
-    title: 'Middleware Abstraction',
-    description: 'Software layer providing communication transparency, serialization, and messaging primitives.',
-    implementation: 'gRPC Protobuf RPCs, RabbitMQ async exchanges, WebSocket real-time stream broadcaster.',
-    tech: 'gRPC, RabbitMQ, WebSockets',
-    demoAction: 'TEST_RPC'
-  },
-  {
-    id: 'MULTIMEDIA',
-    unit: 'UNIT 1',
-    title: 'Distributed Multimedia Systems',
-    description: 'Continuous real-time audio/video streaming over high-speed network channels.',
-    implementation: 'Simulated satellite camera feed streamed directly to browser via WebRTC peer connection.',
-    tech: 'WebRTC, SDP Offer/Answer, ICE Candidates',
-    demoAction: 'OPEN_WEBRTC'
-  },
-  {
-    id: 'RPC',
-    unit: 'UNIT 2',
-    title: 'Remote Procedure Call (RPC)',
-    description: 'Synchronous or asynchronous procedure invocation across network boundaries.',
-    implementation: 'GetHealth(), Ping(), and GetSatelliteInfo() executed via gRPC Protocol Buffers.',
+    title: '3. gRPC Remote Procedure Calls',
+    description: 'Strict interface contract definitions for synchronous health checks, telemetry retrieval, and commands.',
+    implementation: 'GetHealth(), Ping(), and GetSatelliteInfo() defined in satellite.proto and executed over gRPC HTTP/2.',
     tech: 'gRPC, Protobuf, HTTP/2',
     demoAction: 'TEST_RPC'
   },
   {
-    id: 'MESSAGING',
-    unit: 'UNIT 2',
-    title: 'Message-Oriented Communication',
-    description: 'Asynchronous decoupled message passing through queues and exchanges.',
-    implementation: 'Satellites publish telemetry to RabbitMQ telemetry.exchange; background consumers process events.',
+    id: 'RABBITMQ_ASYNC',
+    unit: 'UNIT 1',
+    title: '4. Asynchronous Message-Oriented Middleware',
+    description: 'Decoupled event-driven telemetry publishing using priority queues and background consumers.',
+    implementation: 'Satellites publish AMQP messages to RabbitMQ telemetry exchanges with priority headers.',
     tech: 'RabbitMQ, AMQP Protocol, aio-pika',
-    demoAction: 'TEST_MESSAGING'
+    demoAction: 'INSPECT_OBSERVATORY'
   },
   {
-    id: 'STREAMING',
-    unit: 'UNIT 2',
-    title: 'Stream-Oriented Communication',
-    description: 'Continuous real-time data transmission with steady flow rates.',
-    implementation: 'WebSockets stream telemetry metrics at ~10 messages/sec directly to React charts.',
-    tech: 'WebSockets, JSON Frames',
+    id: 'WEBSOCKET_STREAM',
+    unit: 'UNIT 1',
+    title: '5. Live Stream-Oriented Communication',
+    description: 'Continuous real-time telemetry streaming from backend services to browser dashboard without polling.',
+    implementation: 'WebSocket connection streams live telemetry updates at ~10 messages/sec directly to React UI.',
+    tech: 'WebSockets, JSON Broadcast',
     demoAction: 'TEST_STREAM'
   },
   {
-    id: 'P2P',
-    unit: 'UNIT 2',
-    title: 'Peer-to-Peer (P2P) Messaging',
-    description: 'Direct inter-node communication without central server routing.',
-    implementation: 'SAT-01 sends direct cross-link data to SAT-04 via direct HTTP/socket connection.',
+    id: 'P2P_DIRECT',
+    unit: 'UNIT 1',
+    title: '6. Direct Peer-to-Peer (P2P) Communication',
+    description: 'Direct satellite-to-satellite cross-links without Mission Control relaying payload data.',
+    implementation: 'SAT-01 sends direct network packet to SAT-04 via dedicated P2P HTTP/TCP socket endpoint.',
     tech: 'HTTP/1.1 P2P, Direct Sockets',
     demoAction: 'TEST_P2P'
   },
   {
-    id: 'NAMING',
-    unit: 'UNIT 2',
-    title: 'Names, Identifiers and Addresses',
-    description: 'Dynamic registration, hostname resolution, and network address lookup.',
-    implementation: 'Satellite Registry maps Satellite IDs to node hostnames, IP addresses, gRPC ports, and P2P ports.',
-    tech: 'Dynamic Satellite Registry, TTL Health Sweeper',
-    demoAction: 'TEST_NAMING'
+    id: 'WEBRTC_MULTIMEDIA',
+    unit: 'UNIT 1',
+    title: '7. Distributed Multimedia & WebRTC Stream',
+    description: 'Live continuous multimedia streaming from satellite camera payload directly to client.',
+    implementation: 'WebRTC PeerConnection SDP Offer/Answer signaling delivers live simulated orbit camera video with telemetry overlay.',
+    tech: 'WebRTC, SDP Signaling, VP8 Codec',
+    demoAction: 'TEST_WEBRTC'
   },
   {
-    id: 'FAULT',
+    id: 'HEARTBEAT_FAILURE',
     unit: 'UNIT 2',
-    title: 'Fault Tolerance & Failure Detection',
-    description: 'Heartbeat monitoring, timeout detection, node crash handling, and recovery.',
-    implementation: 'Mission Control sweepers detect missing heartbeats (>10s), mark node OFFLINE, and handle dynamic re-registration on restart.',
-    tech: 'Heartbeat Loop, Fault Simulator',
-    demoAction: 'INJECT_FAULT'
+    title: '8. Heartbeat Failure Detection & Lifecycle',
+    description: 'Multistage heartbeat monitoring detecting missing node heartbeats and updating state.',
+    implementation: 'Sweeper loop transitions nodes: >5s delayed → SUSPECTED, >10s missing → DISCONNECTED.',
+    tech: 'Heartbeat Sweeper, State Machine',
+    demoAction: 'TEST_FAILURE_DETECTION'
   },
   {
-    id: 'ELECTION',
+    id: 'DUAL_FAULT_INJECTION',
     unit: 'UNIT 2',
-    title: 'Ring Leader Election Algorithm',
+    title: '9. Dual-Source Real Fault Injection',
+    description: 'Node failures can be injected via Mission Control UI or directly via external terminal commands.',
+    implementation: 'Executing "docker stop satellite-03" in PowerShell is independently detected by backend heartbeat sweeper.',
+    tech: 'Docker CLI, Fault Simulator Engine',
+    demoAction: 'INSPECT_FAULTS'
+  },
+  {
+    id: 'DETECTION_LATENCY',
+    unit: 'UNIT 2',
+    title: '10. Failure Detection Latency & Recovery Metrics',
+    description: 'Precise quantitative measurement of time elapsed between node failure and detection.',
+    implementation: 'System measures detection latency (ms) and recovery duration upon satellite auto re-registration.',
+    tech: 'Timestamp Delta Calculation',
+    demoAction: 'TEST_METRICS'
+  },
+  {
+    id: 'CORRELATION_IDS',
+    unit: 'UNIT 2',
+    title: '11. End-to-End Event Correlation IDs',
+    description: 'Unified traceability across satellite processes, backend logs, RabbitMQ, WebSockets, and UI.',
+    implementation: 'Every distributed event is tagged with a unique correlation ID format EVT-YYYYMMDD-XXXXX.',
+    tech: 'Global Correlation ID Generator',
+    demoAction: 'TEST_CORRELATION'
+  },
+  {
+    id: 'GOSSIP_STATE',
+    unit: 'UNIT 2',
+    title: '12. Gossip-Based State Dissemination',
+    description: 'Decentralized peer-to-peer state sharing among satellite nodes without central server.',
+    implementation: 'Satellites exchange neighbor health updates via direct /p2p/gossip mesh propagation.',
+    tech: 'P2P Gossip Protocol, Neighbor Map',
+    demoAction: 'TEST_GOSSIP'
+  },
+  {
+    id: 'NETWORK_PARTITION',
+    unit: 'UNIT 2',
+    title: '13. Network Partition & State Reconciliation',
+    description: 'Simulating network splits between satellite groups and deterministic post-recovery state reconciliation.',
+    implementation: 'Restricting cross-partition P2P calls between Partition A & B, followed by state merge reconciliation.',
+    tech: 'Partition Simulator, Deterministic Reconciler',
+    demoAction: 'TEST_PARTITION'
+  },
+  {
+    id: 'RESOURCE_AUTONOMY',
+    unit: 'UNIT 2',
+    title: '14. Local Resource-Aware Satellite Autonomy',
+    description: 'Satellites dynamically adjust operational state based on internal resource constraints.',
+    implementation: 'Battery < 30% activates POWER_SAVING mode (telemetry frequency 2s → 5s); Temp > 80°C activates THERMAL_PROTECTION.',
+    tech: 'Local State Machine, Autonomy Loop',
+    demoAction: 'TEST_AUTONOMY'
+  },
+  {
+    id: 'RING_ELECTION',
+    unit: 'UNIT 2',
+    title: '15. Ring Leader Election Algorithm',
     description: 'Distributed coordination for selecting a unique leader node among active ring members.',
     implementation: 'Ring election circulates through active satellites (SAT-01..05), bypassing failed nodes. Highest active ID is elected leader.',
     tech: 'Ring Leader Election, Active ID Comparison',
     demoAction: 'TEST_ELECTION'
+  },
+  {
+    id: 'CONTAINERIZATION',
+    unit: 'UNIT 2',
+    title: '16. Containerized Multi-Service Infrastructure',
+    description: 'Entire distributed constellation packaged into independent Docker services with isolated networks.',
+    implementation: 'Docker Compose orchestration running 9 containers (frontend, backend, 5 satellites, postgres, rabbitmq).',
+    tech: 'Docker Compose, Bridge Network',
+    demoAction: 'INSPECT_INFRA'
+  },
+  {
+    id: 'DATABASE_AUDIT',
+    unit: 'UNIT 2',
+    title: '17. Persistent Relational Audit Logging',
+    description: 'Historical audit persistence of all RPCs, P2P exchanges, fault logs, and telemetry history.',
+    implementation: 'Async SQLAlchemy ORM persisting events to PostgreSQL satellite_system.db.',
+    tech: 'PostgreSQL, SQLAlchemy Async',
+    demoAction: 'INSPECT_DB'
+  },
+  {
+    id: 'END_TO_END_OBSERVABILITY',
+    unit: 'UNIT 2',
+    title: '18. End-to-End Observability Chain',
+    description: 'Simultaneous visibility of distributed events across Docker logs, backend API, DB, WebSockets, and UI.',
+    implementation: 'Single event visible in Docker container logs, FastAPI logs, DB table, WebSocket broadcast, and Event Timeline.',
+    tech: 'Structured Logging, Event Bus',
+    demoAction: 'INSPECT_OBSERVABILITY'
   }
 ];
 
@@ -145,6 +190,22 @@ export default function DistributedConcepts() {
         setActiveEvidence({ concept: concept.title, status: 'SUCCESS', data });
       } else if (action === 'TEST_ELECTION') {
         const res = await fetch('/api/election/ring?initiator_id=SAT-01', { method: 'POST' });
+        const data = await res.json();
+        setActiveEvidence({ concept: concept.title, status: 'SUCCESS', data });
+      } else if (action === 'TEST_GOSSIP') {
+        const res = await fetch('/api/network/gossip');
+        const data = await res.json();
+        setActiveEvidence({ concept: concept.title, status: 'SUCCESS', data });
+      } else if (action === 'TEST_PARTITION') {
+        const res = await fetch('/api/faults');
+        const data = await res.json();
+        setActiveEvidence({ concept: concept.title, status: 'SUCCESS', data });
+      } else if (action === 'TEST_WEBRTC') {
+        const res = await fetch('/api/webrtc/status');
+        const data = await res.json();
+        setActiveEvidence({ concept: concept.title, status: 'SUCCESS', data });
+      } else if (action === 'INSPECT_OBSERVABILITY') {
+        const res = await fetch('/api/observatory/stats');
         const data = await res.json();
         setActiveEvidence({ concept: concept.title, status: 'SUCCESS', data });
       } else {

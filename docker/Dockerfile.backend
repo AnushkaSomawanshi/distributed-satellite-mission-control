@@ -5,7 +5,9 @@ WORKDIR /app
 COPY proto/ ./proto/
 COPY backend/ ./backend/
 
-RUN pip install --no-cache-dir fastapi uvicorn[standard] pydantic pydantic-settings sqlalchemy aiosqlite grpcio grpcio-tools httpx aio-pika asyncpg
+RUN pip install --no-cache-dir fastapi uvicorn[standard] pydantic pydantic-settings sqlalchemy greenlet aiosqlite grpcio grpcio-tools httpx aio-pika asyncpg psycopg2-binary
+
+
 
 EXPOSE 8000
 

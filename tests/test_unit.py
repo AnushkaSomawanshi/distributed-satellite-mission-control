@@ -40,5 +40,52 @@ def test_registry_heartbeat_timeout():
     import time
     time.sleep(0.2)
     failed = reg.sweep_failures()
-    assert "SAT-88" in failed
-    assert reg.lookup("SAT-88").status == "OFFLINE"
+    assert "SAT-88" in failed.get("disconnected", [])
+    assert reg.lookup("SAT-88").status in ["DISCONNECTED", "OFFLINE"]
+
+def test_physical_clock_synchronization():
+    from backend.services.distributed_clocks import PhysicalClock
+    pclock = PhysicalClock("SAT-01", initial_drift_ms=150.0)
+    ref_time = 1000.0
+    rec = pclock.synchronize(reference_time=ref_time, round_trip_delay_ms=20.0)
+    assert rec["rtt_ms"] == 20.0
+    assert "calculated_offset_ms" in rec
+    assert rec["residual_error_ms"] == 10.0
+
+def test_lamport_and_vector_clocks():
+    from backend.services.distributed_clocks import LamportClock, VectorClock
+    l1 = LamportClock(10)
+    assert l1.increment() == 11
+    assert l1.update(15) == 16
+
+    v1 = VectorClock(["SAT-01", "SAT-02", "SAT-03"])
+    v1.increment("SAT-01")
+    v2 = VectorClock(["SAT-01", "SAT-02", "SAT-03"])
+    v2.increment("SAT-02")
+
+    comp = VectorClock.compare(v1.to_dict(), v2.to_dict())
+    assert comp == "CONCURRENT"
+
+def test_task_reallocation_suitability_scoring():
+    from backend.services.reallocation_engine import global_reallocation_engine
+    task = {
+        "task_id": "T-TEST",
+        "required_capabilities": ["CAMERA", "COMPUTE"]
+    }
+    score = global_reallocation_engine.calculate_candidate_score("SAT-01", task)
+    assert score["eligible"] is True
+    assert score["total_score"] > 50.0
+
+def test_chandy_lamport_snapshot():
+    from backend.services.snapshot_manager import global_snapshot_manager
+    snap = global_snapshot_manager.take_snapshot("SAT-01")
+    assert snap["snapshot_id"].startswith("SNAP-")
+    assert "satellites" in snap["global_state"]
+    assert "tasks" in snap["global_state"]
+
+def test_resilience_scorecard():
+    from backend.services.resilience_engine import global_resilience_engine
+    scorecard = global_resilience_engine.calculate_resilience_metrics()
+    assert "mission_continuity_pct" in scorecard
+    assert scorecard["mission_continuity_pct"] >= 0.0
+

@@ -24,6 +24,15 @@ class SatelliteRegistration:
     cpu_usage: float = 15.0
     memory_usage: float = 30.0
     signal_strength: float = 95.0
+    suspected_timestamp: Optional[float] = None
+    disconnected_timestamp: Optional[float] = None
+    failure_timestamp: Optional[float] = None
+    recovery_timestamp: Optional[float] = None
+    detection_latency_ms: float = 0.0
+    recovery_time_ms: float = 0.0
+    failure_source: str = "SYSTEM"
+    partition_group: Optional[str] = None
+    last_correlation_id: Optional[str] = None
 
 class SatelliteRegistry:
     def __init__(self, heartbeat_ttl_seconds: float = 10.0):
@@ -31,6 +40,7 @@ class SatelliteRegistry:
         self.ttl = heartbeat_ttl_seconds
         self._event_listeners = []
         self.current_leader: str = "SAT-05"
+        self.active_partitions: Dict[str, List[str]] = {} # e.g. {"Partition A": ["SAT-01", "SAT-02"], ...}
 
     def register(
         self,
@@ -75,7 +85,6 @@ class SatelliteRegistry:
     ) -> SatelliteRegistration:
         now = time.time()
         if satellite_id not in self._registry:
-            # Auto-register node if heartbeat arrives prior to explicit registration
             num_suffix = satellite_id.split("-")[-1] if "-" in satellite_id else "01"
             try:
                 idx = int(num_suffix)
@@ -92,9 +101,21 @@ class SatelliteRegistry:
             )
 
         reg = self._registry[satellite_id]
+        
+        # Check recovery transition
+        if reg.status in ["SUSPECTED", "DISCONNECTED", "OFFLINE"]:
+            reg.recovery_timestamp = now
+            if reg.failure_timestamp:
+                reg.recovery_time_ms = round((now - reg.failure_timestamp) * 1000, 2)
+            else:
+                reg.recovery_time_ms = round((now - reg.last_heartbeat) * 1000, 2)
+            logger.info(f"[REGISTRY RECOVERY] Satellite {satellite_id} recovered from {reg.status} -> HEALTHY | recovery_time={reg.recovery_time_ms}ms")
+            reg.status = "HEALTHY"
+        elif reg.status not in ["SUSPECTED", "DISCONNECTED", "OFFLINE"]:
+            reg.status = status
+
         reg.last_heartbeat = now
         reg.health_score = health_score
-        reg.status = status if reg.status != "OFFLINE" else ("HEALTHY" if health_score >= 90 else status)
         reg.battery = battery
         reg.temperature = temperature
         reg.cpu_usage = cpu_usage
@@ -109,9 +130,15 @@ class SatelliteRegistry:
 
         return reg
 
-    def set_status(self, satellite_id: str, status: str) -> bool:
+    def set_status(self, satellite_id: str, status: str, source: str = "SYSTEM") -> bool:
         if satellite_id in self._registry:
-            self._registry[satellite_id].status = status
+            reg = self._registry[satellite_id]
+            reg.status = status
+            reg.failure_source = source
+            if status in ["SUSPECTED", "DISCONNECTED", "OFFLINE"]:
+                now = time.time()
+                if not reg.failure_timestamp:
+                    reg.failure_timestamp = now
             return True
         return False
 
@@ -121,15 +148,39 @@ class SatelliteRegistry:
     def list_all(self) -> List[SatelliteRegistration]:
         return list(self._registry.values())
 
-    def sweep_failures(self) -> List[str]:
+    def sweep_failures(self) -> Dict[str, List[str]]:
+        """
+        Multistage failure sweeper:
+        - 5s < heartbeat age <= 10s -> SUSPECTED
+        - heartbeat age > 10s -> DISCONNECTED
+        """
         now = time.time()
-        failed_satellites = []
+        suspected_satellites = []
+        disconnected_satellites = []
+
         for sat_id, reg in self._registry.items():
-            if reg.status != "OFFLINE" and (now - reg.last_heartbeat) > self.ttl:
-                reg.status = "OFFLINE"
+            age = now - reg.last_heartbeat
+            if age > 5.0 and age <= self.ttl and reg.status not in ["SUSPECTED", "DISCONNECTED", "OFFLINE"]:
+                reg.status = "SUSPECTED"
+                reg.suspected_timestamp = now
+                reg.failure_timestamp = reg.last_heartbeat
+                reg.detection_latency_ms = round((now - reg.last_heartbeat) * 1000, 2)
+                suspected_satellites.append(sat_id)
+                logger.warning(f"[FAILURE DETECTOR] Satellite {sat_id} heartbeat delayed ({age:.1f}s) -> Marked SUSPECTED")
+            elif age > self.ttl and reg.status != "DISCONNECTED" and reg.status != "OFFLINE":
+                reg.status = "DISCONNECTED"
+                reg.disconnected_timestamp = now
+                if not reg.failure_timestamp:
+                    reg.failure_timestamp = reg.last_heartbeat
                 reg.health_score = 0.0
-                failed_satellites.append(sat_id)
-        return failed_satellites
+                reg.detection_latency_ms = round((now - reg.last_heartbeat) * 1000, 2)
+                disconnected_satellites.append(sat_id)
+                logger.warning(f"[FAILURE DETECTOR] Satellite {sat_id} heartbeat lost ({age:.1f}s) -> Marked DISCONNECTED")
+
+        return {
+            "suspected": suspected_satellites,
+            "disconnected": disconnected_satellites
+        }
 
     def to_dict_list(self) -> List[Dict[str, Any]]:
         now = time.time()

@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mission-control-backend
+  namespace: orbital-mission
+  labels:
+    app: mission-control-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mission-control-backend
+  template:
+    metadata:
+      labels:
+        app: mission-control-backend
+    spec:
+      containers:
+      - name: backend
+        image: orbital-mission-backend:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8000
+        envFrom:
+        - configMapRef:
+            name: mission-control-config
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 15
+        resources:
+          limits:
+            cpu: "1.0"
+            memory: "512Mi"
+          requests:
+            cpu: "250m"
+            memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mission-control-backend
+  namespace: orbital-mission
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8000
+    targetPort: 8000
+  selector:
+    app: mission-control-backend

@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: orbital-mission
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mission-control-config
+  namespace: orbital-mission
+data:
+  DATABASE_URL: "sqlite:////app/satellite_system.db"
+  RABBITMQ_HOST: "satellite-rabbitmq"
+  RABBITMQ_PORT: "5672"
+  REGISTRY_URL: "http://mission-control-backend:8000"
+  LOG_LEVEL: "INFO"

@@ -75,3 +75,65 @@ class ConceptEvidence(Base):
     technology_used = Column(String(100), nullable=False)
     last_evidence_summary = Column(Text, nullable=True)
     last_triggered_at = Column(Float, default=time.time)
+
+class MissionModel(Base):
+    __tablename__ = "missions"
+
+    mission_id = Column(String(50), primary_key=True)
+    name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    status = Column(String(30), default="ACTIVE") # ACTIVE, COMPLETED, DEGRADED
+    created_at = Column(Float, default=time.time)
+
+class MissionTaskModel(Base):
+    __tablename__ = "mission_tasks"
+
+    task_id = Column(String(50), primary_key=True)
+    mission_id = Column(String(50), nullable=False, index=True)
+    task_type = Column(String(50), nullable=False) # EARTH_OBSERVATION, THERMAL_MAP, DATA_RELAY, COMPUTE_ANALYTICS
+    description = Column(Text, nullable=True)
+    priority = Column(String(20), default="MEDIUM") # HIGH, MEDIUM, LOW
+    deadline = Column(Float, nullable=True)
+    required_capabilities = Column(Text, nullable=False) # JSON array e.g. ["CAMERA", "COMPUTE"]
+    current_owner = Column(String(50), nullable=True)
+    previous_owner = Column(String(50), nullable=True)
+    status = Column(String(30), default="RUNNING") # CREATED, RUNNING, PAUSED, AFFECTED, REASSIGNED, COMPLETED
+    lamport_timestamp = Column(BigInteger, default=0)
+    vector_clock = Column(Text, nullable=True) # JSON dict e.g. {"SAT-01": 1, ...}
+    created_at = Column(Float, default=time.time)
+    updated_at = Column(Float, default=time.time)
+
+class SnapshotModel(Base):
+    __tablename__ = "snapshots"
+
+    snapshot_id = Column(String(50), primary_key=True)
+    initiator = Column(String(50), nullable=False)
+    global_state_json = Column(Text, nullable=False)
+    channel_state_json = Column(Text, nullable=True)
+    in_transit_messages_json = Column(Text, nullable=True)
+    timestamp = Column(Float, default=time.time, index=True)
+
+class IncidentModel(Base):
+    __tablename__ = "incidents"
+
+    incident_id = Column(String(50), primary_key=True)
+    title = Column(String(100), nullable=False)
+    severity = Column(String(20), default="HIGH") # HIGH, CRITICAL, MEDIUM, LOW
+    cause_node = Column(String(50), nullable=False)
+    affected_tasks_json = Column(Text, nullable=True)
+    recovery_status = Column(String(30), default="RECOVERED")
+    recovery_duration_ms = Column(Float, default=0.0)
+    event_timeline_json = Column(Text, nullable=False)
+    created_at = Column(Float, default=time.time, index=True)
+
+class ExperimentModel(Base):
+    __tablename__ = "experiments"
+
+    experiment_id = Column(String(50), primary_key=True)
+    title = Column(String(100), nullable=False)
+    scenario = Column(String(50), nullable=False)
+    parameters_json = Column(Text, nullable=False)
+    results_json = Column(Text, nullable=False)
+    metrics_json = Column(Text, nullable=False)
+    created_at = Column(Float, default=time.time, index=True)
+

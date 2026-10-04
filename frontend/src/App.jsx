@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
+import SatelliteDetailModal from './components/SatelliteDetailModal';
+import EventTraceDrawer from './components/EventTraceDrawer';
 
 import MissionOverview from './pages/MissionOverview';
 import ConstellationMap from './pages/ConstellationMap';
@@ -14,7 +16,19 @@ import LiveTelemetryPage from './pages/LiveTelemetryPage';
 import MultimediaPage from './pages/MultimediaPage';
 import MiddlewarePage from './pages/MiddlewarePage';
 import SystemHealthDemo from './pages/SystemHealthDemo';
-import TeacherQuestionsPage from './pages/TeacherQuestionsPage';
+import RuntimeObservabilityPage from './pages/RuntimeObservabilityPage';
+
+import MissionTasksPage from './pages/MissionTasksPage';
+import ClockSyncPage from './pages/ClockSyncPage';
+import RingElectionPage from './pages/RingElectionPage';
+import MutexManagerPage from './pages/MutexManagerPage';
+import GlobalSnapshotPage from './pages/GlobalSnapshotPage';
+import IncidentConsolePage from './pages/IncidentConsolePage';
+import Unit4LabPage from './pages/Unit4LabPage';
+import FailureIntelligencePage from './pages/FailureIntelligencePage';
+import ExperimentLabPage from './pages/ExperimentLabPage';
+import PartitionReconciliationPage from './pages/PartitionReconciliationPage';
+
 
 export default function App() {
   const [satellites, setSatellites] = useState([]);
@@ -23,6 +37,8 @@ export default function App() {
   const [activeFaults, setActiveFaults] = useState([]);
   const [telemetryHistory, setTelemetryHistory] = useState([]);
   const [wsConnected, setWsConnected] = useState(false);
+  const [selectedSatForModal, setSelectedSatForModal] = useState(null);
+  const [activeCorrelationId, setActiveCorrelationId] = useState(null);
 
   // Fetch initial satellite data & health
   const fetchSatelliteData = async () => {
@@ -32,7 +48,6 @@ export default function App() {
       const satList = data.satellites || [];
       setSatellites(satList);
 
-      // Seed initial baseline telemetry points if history is empty
       setTelemetryHistory((prev) => {
         if (prev.length < 3 && satList.length > 0) {
           const now = new Date();
@@ -96,8 +111,7 @@ export default function App() {
         try {
           const msg = JSON.parse(event.data);
           
-          // Instantly sync satellite state across all pages on event broadcasts
-          if (['FAULT_INJECTED', 'FAULTS_CLEARED', 'SATELLITE_STATUS_CHANGED', 'LEADER_ELECTION_COMPLETED', 'HEARTBEAT_TIMEOUT'].includes(msg.event_type)) {
+          if (['FAULT_INJECTED', 'FAULTS_CLEARED', 'SATELLITE_STATUS_CHANGED', 'LEADER_ELECTION_COMPLETED', 'HEARTBEAT_TIMEOUT', 'NODE_SUSPECTED', 'NODE_DISCONNECTED', 'TASK_REASSIGNED', 'MUTEX_REQUEST_PROCESSED', 'SNAPSHOT_COMPLETED', 'AUTONOMOUS_REALLOCATION_COMPLETED'].includes(msg.event_type)) {
             fetchSatelliteData();
           }
 
@@ -117,7 +131,7 @@ export default function App() {
                   [`${satId}_health`]: Number(telemetry.health_score || 100)
                 };
                 const next = [...prev, newPoint];
-                if (next.length > 35) next.shift(); // 35 sample rolling window
+                if (next.length > 35) next.shift();
                 return next;
               });
             }
@@ -138,22 +152,47 @@ export default function App() {
           <Sidebar />
           <main className="flex-1 p-6 overflow-y-auto">
             <Routes>
-              <Route path="/" element={<MissionOverview satellites={satellites} observatoryStats={observatoryStats} />} />
+              <Route path="/" element={<MissionOverview satellites={satellites} observatoryStats={observatoryStats} onSelectSatellite={setSelectedSatForModal} onSelectCorrelationId={setActiveCorrelationId} />} />
+              <Route path="/tasks" element={<MissionTasksPage />} />
+              <Route path="/clocks" element={<ClockSyncPage />} />
+              <Route path="/ring-election" element={<RingElectionPage />} />
+              <Route path="/mutex" element={<MutexManagerPage />} />
+              <Route path="/snapshots" element={<GlobalSnapshotPage />} />
+              <Route path="/failure-intelligence" element={<FailureIntelligencePage />} />
+              <Route path="/incidents" element={<IncidentConsolePage />} />
+              <Route path="/experiments" element={<ExperimentLabPage />} />
+              <Route path="/partition" element={<PartitionReconciliationPage />} />
+              <Route path="/unit4-lab" element={<Unit4LabPage />} />
+
               <Route path="/topology" element={<ConstellationMap satellites={satellites} />} />
-              <Route path="/observatory" element={<CommunicationObservatory observatoryStats={observatoryStats} />} />
+              <Route path="/observatory" element={<CommunicationObservatory observatoryStats={observatoryStats} onSelectCorrelationId={setActiveCorrelationId} />} />
               <Route path="/replay" element={<CommunicationReplay />} />
               <Route path="/concepts" element={<DistributedConcepts />} />
-              <Route path="/faults" element={<FaultSimulatorPage satellites={satellites} activeFaults={activeFaults} />} />
-              <Route path="/registry" element={<SatelliteRegistryPage satellites={satellites} onRefresh={fetchSatelliteData} />} />
+              <Route path="/faults" element={<FaultSimulatorPage satellites={satellites} activeFaults={activeFaults} onSelectCorrelationId={setActiveCorrelationId} />} />
+              <Route path="/registry" element={<SatelliteRegistryPage satellites={satellites} onRefresh={fetchSatelliteData} onSelectSatellite={setSelectedSatForModal} />} />
               <Route path="/telemetry" element={<LiveTelemetryPage telemetryHistory={telemetryHistory} satellites={satellites} />} />
               <Route path="/multimedia" element={<MultimediaPage />} />
               <Route path="/middleware" element={<MiddlewarePage />} />
               <Route path="/demo-center" element={<SystemHealthDemo />} />
-              <Route path="/teacher-questions" element={<TeacherQuestionsPage />} />
+              <Route path="/runtime-observability" element={<RuntimeObservabilityPage />} />
             </Routes>
           </main>
         </div>
+
+        {/* Global Modals & Event Trace Drawer */}
+        <SatelliteDetailModal
+          isOpen={!!selectedSatForModal}
+          onClose={() => setSelectedSatForModal(null)}
+          satellite={selectedSatForModal}
+        />
+
+        <EventTraceDrawer
+          isOpen={!!activeCorrelationId}
+          onClose={() => setActiveCorrelationId(null)}
+          correlationId={activeCorrelationId}
+        />
       </div>
     </Router>
   );
 }
+

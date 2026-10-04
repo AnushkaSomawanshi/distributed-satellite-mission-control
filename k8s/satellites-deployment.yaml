@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: satellite-01
+  namespace: orbital-mission
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: satellite-01
+  template:
+    metadata:
+      labels:
+        app: satellite-01
+    spec:
+      containers:
+      - name: satellite-node
+        image: orbital-satellite-node:latest
+        args: ["--id", "SAT-01", "--grpc-port", "5001", "--p2p-port", "6001", "--registry", "http://mission-control-backend:8000"]
+        ports:
+        - containerPort: 5001
+        - containerPort: 6001
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: satellite-05
+  namespace: orbital-mission
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: satellite-05
+  template:
+    metadata:
+      labels:
+        app: satellite-05
+    spec:
+      containers:
+      - name: satellite-node
+        image: orbital-satellite-node:latest
+        args: ["--id", "SAT-05", "--grpc-port", "5005", "--p2p-port", "6005", "--registry", "http://mission-control-backend:8000"]
+        ports:
+        - containerPort: 5005
+        - containerPort: 6005
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"

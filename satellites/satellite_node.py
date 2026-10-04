@@ -50,13 +50,17 @@ class SatelliteNode:
         self.velocity_kms = 7.66
         self.sequence_number = 0
         
-        # Fault hooks
+        # Fault hooks & Autonomy
         self.latency_injection_ms = 0.0
         self.packet_loss_pct = 0.0
+        self.power_mode = "NORMAL" # NORMAL, POWER_SAVING, THERMAL_PROTECTION
+        self.telemetry_interval = 2.0
+        self.neighbor_health_map: Dict[str, Dict[str, Any]] = {}
+        self.gossip_history: List[Dict[str, Any]] = []
 
     def calculate_health_score(self) -> float:
         b_score = min(25.0, 25.0 * (self.battery / 70.0))
-        t_score = 25.0 if 15 <= self.temperature <= 45 else 10.0
+        t_score = 25.0 if 15 <= self.temperature <= 45 else (10.0 if self.temperature <= 75 else 0.0)
         c_score = 20.0 if self.cpu_usage <= 70 else 5.0
         m_score = 15.0 if self.memory_usage <= 80 else 5.0
         s_score = min(15.0, 15.0 * (self.signal_strength / 60.0))
@@ -73,7 +77,7 @@ class SatelliteNode:
 
         in_eclipse = math.cos(self.orbit_angle) < -0.3
         if in_eclipse:
-            self.battery = max(35.0, self.battery - 0.25 + random.uniform(-0.05, 0.05))
+            self.battery = max(15.0, self.battery - 0.25 + random.uniform(-0.05, 0.05))
             self.temperature = max(12.0, self.temperature - 0.3 + random.uniform(-0.1, 0.1))
         else:
             self.battery = min(100.0, self.battery + 0.35 + random.uniform(-0.05, 0.05))
@@ -82,6 +86,23 @@ class SatelliteNode:
         self.cpu_usage = round(max(5.0, min(99.0, 18.0 + 10.0 * math.sin(self.orbit_angle * 3) + random.uniform(-3, 3))), 1)
         self.memory_usage = round(max(10.0, min(95.0, 32.0 + 5.0 * math.cos(self.orbit_angle * 2) + random.uniform(-1, 1))), 1)
         self.signal_strength = round(max(50.0, min(100.0, 94.0 + 5.0 * math.sin(self.orbit_angle * 5) + random.uniform(-2, 2))), 1)
+
+        # Autonomous mode adjustments based on operational telemetry
+        if self.battery < 30.0:
+            if self.power_mode != "POWER_SAVING":
+                logger.warning(f"[{self.satellite_id} AUTONOMY] Battery low ({self.battery:.1f}%) -> Activating POWER_SAVING mode")
+                self.power_mode = "POWER_SAVING"
+                self.telemetry_interval = 5.0
+        elif self.temperature > 80.0:
+            if self.power_mode != "THERMAL_PROTECTION":
+                logger.warning(f"[{self.satellite_id} AUTONOMY] Temperature spike ({self.temperature:.1f}°C) -> Activating THERMAL_PROTECTION mode")
+                self.power_mode = "THERMAL_PROTECTION"
+                self.telemetry_interval = 1.0
+        else:
+            if self.power_mode != "NORMAL":
+                logger.info(f"[{self.satellite_id} AUTONOMY] Telemetry nominal -> Restoring NORMAL mode")
+                self.power_mode = "NORMAL"
+                self.telemetry_interval = 2.0
 
     def get_telemetry_dict(self):
         return {
@@ -101,9 +122,45 @@ class SatelliteNode:
             "signal_strength": round(self.signal_strength, 2),
             "health_score": self.calculate_health_score(),
             "status": self.status,
+            "power_mode": self.power_mode,
+            "neighbor_health_map": self.neighbor_health_map,
             "uptime_seconds": int(time.time() - self.start_time),
             "timestamp": time.time()
         }
+
+    async def propagate_gossip(self, packet: dict):
+        path = packet.get("path", [])
+        hops = packet.get("hops", 0)
+        curr_path = path + [self.satellite_id]
+        
+        all_peers = [f"sat-0{i}" for i in range(1, 6) if f"SAT-0{i}" != self.satellite_id and f"sat-0{i}" not in [p.lower() for p in curr_path]]
+        if not all_peers:
+            return
+
+        target_peer = random.choice(all_peers)
+        peer_num = int(target_peer.split("-")[-1])
+        dest_p2p_port = 6000 + peer_num
+        dest_address = target_peer
+
+        gossip_payload = {
+            "correlation_id": packet.get("correlation_id"),
+            "origin_satellite_id": packet.get("origin_satellite_id"),
+            "origin_status": packet.get("origin_status"),
+            "origin_health": packet.get("origin_health"),
+            "origin_battery": packet.get("origin_battery"),
+            "origin_temp": packet.get("origin_temp"),
+            "hops": hops + 1,
+            "path": curr_path,
+            "timestamp": time.time()
+        }
+
+        url = f"http://{dest_address}:{dest_p2p_port}/p2p/gossip"
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                await client.post(url, json=gossip_payload)
+                logger.info(f"[{self.satellite_id} GOSSIP PROPAGATED] Forwarded state to {target_peer.upper()} | Hops={hops+1} | Path={'->'.join(curr_path)}")
+        except Exception:
+            pass
 
     async def register_with_mission_control(self) -> bool:
         url = f"{self.registry_url}/api/satellites/register"
@@ -248,6 +305,43 @@ def create_satellite_p2p_app(node: SatelliteNode) -> FastAPI:
             "processing_delay_ms": round((time.time() - start_t) * 1000, 2),
             "received_timestamp": time.time()
         }
+
+    @app.post("/p2p/gossip")
+    async def receive_gossip(packet: dict):
+        cid = packet.get("correlation_id", f"EVT-GOSSIP-{int(time.time()*1000)}")
+        origin_id = packet.get("origin_satellite_id")
+        path = packet.get("path", [])
+        hops = packet.get("hops", 0)
+        
+        if origin_id:
+            node.neighbor_health_map[origin_id] = {
+                "status": packet.get("origin_status"),
+                "health_score": packet.get("origin_health"),
+                "battery": packet.get("origin_battery"),
+                "temperature": packet.get("origin_temp"),
+                "updated_at": time.time(),
+                "hops": hops,
+                "path": path + [node.satellite_id]
+            }
+        
+        node.gossip_history.append({
+            "correlation_id": cid,
+            "origin": origin_id,
+            "hops": hops,
+            "path": path + [node.satellite_id],
+            "received_at": time.time()
+        })
+        
+        logger.info(f"[{node.satellite_id} GOSSIP] Received state update from {origin_id} via path {'->'.join(path)} (hops={hops})")
+        
+        if hops < 3:
+            asyncio.create_task(node.propagate_gossip(packet))
+            
+        return {"status": "RECEIVED", "receiver": node.satellite_id, "hops": hops + 1, "correlation_id": cid}
+
+    @app.get("/p2p/state")
+    async def get_node_state():
+        return node.get_telemetry_dict()
 
     @app.post("/p2p/send_to_peer")
     async def send_to_peer(req: dict):
