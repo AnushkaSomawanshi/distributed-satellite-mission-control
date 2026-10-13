@@ -379,3 +379,28 @@
   .orbit-pro-state-legend { gap:12px; }
   .orbit-pro-state-legend > div { font-size:9px; }
 }
+
+
+/* Persistent interactive map: a first-class dashboard panel, not a separate route */
+.orbit-pro-map-section { margin-top:16px; }
+.orbit-pro-live-map { width:100%; }
+.orbit-pro-map-live-label { display:inline-flex; align-items:center; gap:7px; padding:6px 8px; border:1px solid rgba(45,212,191,.2); border-radius:5px; background:rgba(16,185,129,.07); color:#61e8c0; font:8px 'JetBrains Mono',monospace; white-space:nowrap; }
+.orbit-pro-map-live-label > span { width:6px; height:6px; border-radius:50%; background:#2dd4bf; box-shadow:0 0 7px #2dd4bf; }
+.orbit-pro-map-layout { display:grid; grid-template-columns:minmax(0,1.8fr) minmax(250px,.72fr); min-height:285px; }
+.orbit-pro-map-frame { position:relative; min-height:285px; overflow:hidden; background:#07192a; }
+.orbit-pro-map-frame iframe { display:block; width:100%; height:100%; min-height:285px; border:0; filter:saturate(.78) contrast(1.03); }
+.orbit-pro-map-overlay { position:absolute; top:12px; left:12px; display:flex; align-items:center; gap:7px; padding:8px 10px; border:1px solid rgba(78,174,206,.3); border-radius:5px; background:rgba(2,14,29,.88); color:#b5e9f4; font:9px 'JetBrains Mono',monospace; letter-spacing:.08em; pointer-events:none; backdrop-filter:blur(8px); }
+.orbit-pro-map-overlay svg { color:#56e6f7; }
+.orbit-pro-map-details { display:flex; flex-direction:column; padding:14px; border-left:1px solid rgba(69,117,150,.2); background:rgba(2,13,27,.65); }
+.orbit-pro-map-detail-title { display:flex; align-items:center; gap:9px; padding-bottom:13px; border-bottom:1px solid rgba(69,117,150,.18); color:#4fe1f5; }
+.orbit-pro-map-detail-title strong { display:block; color:#e4f5ff; font-size:11px; font-weight:600; }
+.orbit-pro-map-detail-title span { display:block; margin-top:3px; color:#6889a2; font-size:9px; }
+.orbit-pro-map-stat { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px 0; border-bottom:1px solid rgba(69,117,150,.14); }
+.orbit-pro-map-stat span { color:#83a1b7; font-size:10px; }
+.orbit-pro-map-stat strong { color:#e5f7ff; font-size:10px; font-weight:600; text-align:right; }
+.orbit-pro-map-stat .map-value-good { color:#59e7bd; }
+.orbit-pro-map-note { display:flex; align-items:flex-start; gap:8px; margin-top:13px; color:#7694aa; font-size:9px; line-height:1.55; }
+.orbit-pro-map-note svg { flex:0 0 auto; margin-top:1px; color:#f0c46d; }
+.orbit-pro-map-link { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:auto; padding-top:14px; color:#50e1f5; font-size:10px; }
+.orbit-pro-map-link:hover { color:#c1faff; }
+@media (max-width:900px) { .orbit-pro-map-layout { grid-template-columns:minmax(0,1fr); } .orbit-pro-map-details { border-left:0; border-top:1px solid rgba(69,117,150,.2); } .orbit-pro-map-frame,.orbit-pro-map-frame iframe { min-height:300px; height:300px; } .orbit-pro-map-note { max-width:700px; } }
