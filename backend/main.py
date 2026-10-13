@@ -20,7 +20,8 @@ from backend.database.db import init_db, get_db
 from backend.database.models import CommunicationEvent, TelemetryLog, ConceptEvidence
 from backend.models.schemas import (
     RegistrationRequest, HeartbeatRequest, RPCInvokeRequest,
-    P2PSendRequest, FaultInjectRequest, WebRTCOfferRequest, WebRTCICECandidateRequest
+    P2PSendRequest, FaultInjectRequest, WebRTCOfferRequest, WebRTCICECandidateRequest,
+    TelemetryObservation
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -90,33 +91,38 @@ async def lifespan(app: FastAPI):
     # Register rabbitmq telemetry callback to broadcast via WebSocket & persist
     async def handle_incoming_telemetry(payload: Dict[str, Any]):
         sat_data = payload.get("data", {})
-        sat_id = sat_data.get("satellite_id")
-        
-        if sat_id:
-            # Update registry metrics
-            score, status, _ = HealthEngine.calculate_health(
-                battery=sat_data.get("battery", 100),
-                temperature=sat_data.get("temperature", 25),
-                cpu_usage=sat_data.get("cpu_usage", 15),
-                memory_usage=sat_data.get("memory_usage", 30),
-                signal_strength=sat_data.get("signal_strength", 95),
-                is_online=True
-            )
-            global_registry.update_heartbeat(
-                satellite_id=sat_id,
-                health_score=score,
-                status=status,
-                battery=sat_data.get("battery", 100),
-                temperature=sat_data.get("temperature", 25),
-                cpu_usage=sat_data.get("cpu_usage", 15),
-                memory_usage=sat_data.get("memory_usage", 30),
-                signal_strength=sat_data.get("signal_strength", 95)
-            )
+        try:
+            observation = TelemetryObservation(**sat_data)
+        except Exception as exc:
+            # Reject malformed/incomplete observations instead of inventing plausible readings.
+            logger.warning("Rejected invalid telemetry payload: %s", exc)
+            return
 
-        # Broadcast telemetry over WebSocket
+        sat_data = observation.dict(exclude_none=True)
+        sat_id = observation.satellite_id
+        score, status, _ = HealthEngine.calculate_health(
+            battery=observation.battery,
+            temperature=observation.temperature,
+            cpu_usage=observation.cpu_usage,
+            memory_usage=observation.memory_usage,
+            signal_strength=observation.signal_strength,
+            is_online=True
+        )
+        global_registry.update_heartbeat(
+            satellite_id=sat_id,
+            health_score=score,
+            status=status,
+            battery=observation.battery,
+            temperature=observation.temperature,
+            cpu_usage=observation.cpu_usage,
+            memory_usage=observation.memory_usage,
+            signal_strength=observation.signal_strength
+        )
+
+        # Only validated observations are broadcast as telemetry.
         await websocket_manager.broadcast({
             "event_type": "TELEMETRY_UPDATED",
-            "telemetry": payload,
+            "telemetry": {"data": sat_data},
             "timestamp": time.time()
         })
 
