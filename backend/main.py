@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, Query
+from pydantic import ValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -93,7 +94,7 @@ async def lifespan(app: FastAPI):
         sat_data = payload.get("data", {})
         try:
             observation = TelemetryObservation(**sat_data)
-        except Exception as exc:
+        except ValidationError as exc:
             # Reject malformed/incomplete observations instead of inventing plausible readings.
             logger.warning("Rejected invalid telemetry payload: %s", exc)
             return
