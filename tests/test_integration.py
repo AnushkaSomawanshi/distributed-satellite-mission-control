@@ -18,11 +18,25 @@ def test_fault_injection_and_recovery():
     assert registry.lookup("SAT-01").status == "HEALTHY"
 
 @pytest.mark.asyncio
-async def test_end_to_end_coordinator_failure_and_task_recovery():
+async def test_end_to_end_coordinator_failure_and_task_recovery(monkeypatch):
     from backend.registry.service_registry import global_registry
-    from backend.services.election_manager import global_election_manager
-    from backend.services.reallocation_engine import global_reallocation_engine
     from backend.services.simulation_engine import global_simulation_engine
+    from backend.fa2 import router as fa2
+
+    # The satellites (not Mission Control) elect the new leader. Here the satellite side is stubbed:
+    # the crash is "delivered" and the survivors are reported to agree on SAT-04.
+    crashed = []
+
+    async def fake_push(fault, params, targets=None):
+        crashed.append((fault, targets))
+        return {t: "APPLIED" for t in targets or []}
+
+    async def fake_agreement(min_term, exclude=(), timeout=12.0):
+        assert "SAT-05" in exclude
+        return {"leader": "SAT-04", "term": 2, "agreed_by": ["SAT-01", "SAT-02", "SAT-03", "SAT-04"]}
+
+    monkeypatch.setattr(fa2, "push_fault", fake_push)
+    monkeypatch.setattr(fa2, "_wait_agreement", fake_agreement)
 
     # Seed satellites
     for i in range(1, 6):
@@ -37,6 +51,8 @@ async def test_end_to_end_coordinator_failure_and_task_recovery():
 
     assert res["mode"] == "SCENARIO_EXECUTED"
     assert res["target_node"] == "SAT-05"
+    assert ("CRASH", ["SAT-05"]) in crashed
     assert res["election_result"]["new_leader"] == "SAT-04"
+    assert res["election_result"]["decided_by"].startswith("satellites")
     assert res["task_reallocation_result"]["tasks_reassigned_count"] >= 0
 

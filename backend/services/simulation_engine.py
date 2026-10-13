@@ -17,7 +17,6 @@ from typing import Dict, Any, List, Optional
 from backend.registry.service_registry import global_registry
 from backend.faults.fault_simulator import global_fault_simulator
 from backend.services.impact_analyzer import global_impact_analyzer
-from backend.services.election_manager import global_election_manager
 from backend.services.reallocation_engine import global_task_manager, global_reallocation_engine
 from backend.services.resilience_engine import global_resilience_engine
 
@@ -75,11 +74,23 @@ class FailureSimulator:
         )
         global_registry.set_status(target_node, "DISCONNECTED", source="SIMULATOR")
 
-        # 2. Run Ring Election if coordinator failed
+        # 2. Crash the satellite process itself; if it was the coordinator, the survivors detect it
+        #    through their beacons and elect a new leader BY THEMSELVES. Mission Control only waits
+        #    for them to agree and reports what they decided.
+        from backend.fa2 import router as fa2
+        crash_result = await fa2.push_fault("CRASH", {}, [target_node])
         election_res = None
         if target_node == global_registry.current_leader:
-            initiator = [s for s in ["SAT-01", "SAT-02", "SAT-03", "SAT-04", "SAT-05"] if s != target_node][0]
-            election_res = await global_election_manager.execute_ring_election(initiator_id=initiator)
+            agreement = await fa2._wait_agreement(0, exclude=(target_node,), timeout=25.0)
+            election_res = {
+                "status": "NEW_LEADER_AGREED" if agreement else "NO_AGREEMENT_WITHIN_TIMEOUT",
+                "new_leader": agreement["leader"] if agreement else None,
+                "agreement": agreement,
+                "decided_by": "satellites (beacon failure detection + election)",
+                "crash_result": crash_result,
+            }
+            if agreement:
+                global_registry.current_leader = agreement["leader"]
 
         # 3. Execute Autonomous Task Reallocation
         reallocation_res = await global_reallocation_engine.execute_reallocation_for_failed_node(target_node)

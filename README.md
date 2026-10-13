@@ -191,13 +191,13 @@ Nodes dynamically discover network endpoints without hardcoded IP lists:
 
 ## 13. Leader Election
 
-Consensus and coordination are established via **Ring Leader Election**:
-- Logical Ring: `SAT-01 ➔ SAT-02 ➔ SAT-03 ➔ SAT-04 ➔ SAT-05 ➔ SAT-01`.
-- Initiator sends election message circulating the ring.
-- Active nodes append their ID; `OFFLINE` nodes are automatically bypassed.
-- Node with the highest active ID is elected leader (`SAT-05` under nominal conditions).
+The satellites elect their coordinator **among themselves** over their P2P links (FA-2):
+- **Bully** and **Ring**, one implementation with a leader + term number.
+- Priority = (health rounded down to tens, ID), so an unhealthy satellite never leads.
+- Satellite-to-satellite **beacons** detect a dead leader (DEAD after 5 s of silence) and the survivors re-elect without Mission Control.
+- Mission Control only starts elections and records what the satellites decided.
 
-*For complete details, view [LEADER_ELECTION.md](docs/LEADER_ELECTION.md).*
+*See [FA2_PHASE_1_2.md](docs/FA2_PHASE_1_2.md) for the algorithms, measured results and demo script.*
 
 ---
 
@@ -293,10 +293,13 @@ docker compose start satellite-02
 | **RabbitMQ AMQP Pub-Sub** | **FULLY IMPLEMENTED** | Real-time queue ingestion with fallback mode |
 | **WebSocket Streaming** | **FULLY IMPLEMENTED** | Broadcast manager in `backend/communication/websocket_manager.py` |
 | **Direct P2P Links** | **FULLY IMPLEMENTED** | Inter-satellite HTTP/TCP trigger in `satellites/satellite_node.py` |
-| **Ring Leader Election** | **FULLY IMPLEMENTED** | Ring algorithm in `backend/registry/service_registry.py` |
+| **Leader Election (Bully + Ring)** | **FULLY IMPLEMENTED (FA-2)** | Runs on the satellites: `satellites/dsync/election.py` |
+| **Beacon Protocol** | **FULLY IMPLEMENTED (FA-2)** | Satellite-to-satellite discovery + failure detection: `satellites/dsync/beacon.py` |
+| **Clock Sync (Cristian + Berkeley)** | **FULLY IMPLEMENTED (FA-2)** | `satellites/dsync/clocksync.py`, drift injected per satellite |
+| **Mutual Exclusion (4 algorithms)** | **FULLY IMPLEMENTED (FA-2)** | Centralised, Ricart–Agrawala, Token Ring, Lodha–Kshemkalyani: `satellites/dsync/mutex.py` |
 | **WebRTC Signaling** | **PARTIALLY IMPLEMENTED** | SDP offer/answer exchange stubs in `webrtc_signaling.py` |
-| **Lamport & Vector Clocks** | **INTERFACE STUB** | Abstract interfaces defined in `backend/fa2_extensions/interfaces.py` |
-| **Chandy-Lamport Snapshots** | **INTERFACE STUB** | Abstract interfaces defined in `backend/fa2_extensions/interfaces.py` |
+| **Lamport & Vector Clocks** | **FULLY IMPLEMENTED (FA-2)** | Stamped on every satellite message: `satellites/dsync/clocks.py`, `transport.py` |
+| **Chandy-Lamport Snapshots** | **PHASE 3** | Current snapshot service still reads Mission Control state |
 
 ---
 
@@ -313,5 +316,6 @@ Detailed engineering and viva documentation files are located in the [`docs/`](d
 - 🐳 **[Deployment & Containerization](docs/DEPLOYMENT.md)**: Docker Compose blueprint, ports, and troubleshooting.
 - 🔌 **[API Documentation](docs/API.md)**: REST endpoints, request/response schemas, and WebSocket events.
 - 🎬 **[Teacher Demonstration Guide](docs/DEMO_GUIDE.md)**: Step-by-step presentation script and viva prompts.
+- 🛰️ **[FA-2 Phase 1 + 2](docs/FA2_PHASE_1_2.md)**: Unit 3 algorithms on the satellites, measured results, demo script 15–21.
 - 🧪 **[Testing & Verification](docs/TESTING.md)**: Automated tests, manual test matrix, and verification status.
 - 📂 **[Project Structure](docs/PROJECT_STRUCTURE.md)**: Repository map, module responsibilities, and data models.

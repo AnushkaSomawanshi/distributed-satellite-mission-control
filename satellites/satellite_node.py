@@ -27,6 +27,7 @@ except Exception:
     HAS_GRPC = False
 
 from satellites.telemetry_publisher import TelemetryPublisher
+from satellites.dsync import DsyncNode, create_dsync_router
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s")
 logger = logging.getLogger("SatelliteNode")
@@ -76,6 +77,34 @@ class SatelliteNode:
 
         # Message-oriented telemetry (RabbitMQ, with a labelled HTTP fallback)
         self.telemetry_publisher = TelemetryPublisher(satellite_id, rabbitmq_url, self.registry_url)
+
+        # FA-2: clocks, beacons, election, clock sync and mutual exclusion run HERE, between satellites.
+        self.dsync = DsyncNode(satellite_id, info=self._dsync_info,
+                               event_sink=self.telemetry_publisher.publish_events,
+                               election_algorithm=os.getenv("ELECTION_ALGORITHM", "bully"))
+
+    def _dsync_info(self) -> Dict[str, Any]:
+        return {
+            "address": self.address,
+            "p2p_port": self.p2p_port,
+            "health": self.calculate_health_score(),
+            "position": {"latitude": getattr(self, "latitude", None), "longitude": getattr(self, "longitude", None)},
+        }
+
+    @property
+    def silent(self) -> bool:
+        """Simulated crash (STOP fault): no heartbeats, telemetry, gossip or algorithm messages."""
+        return self.dsync.transport.silent
+
+    async def fetch_server_time(self) -> float:
+        """Cristian's algorithm: Mission Control acts as the time server."""
+        # One persistent connection: a fresh connection per request adds set-up delay to the outbound
+        # half only, which breaks Cristian's symmetric-delay assumption.
+        if getattr(self, "_time_client", None) is None:
+            self._time_client = httpx.AsyncClient(timeout=3.0)
+        resp = await self._time_client.get(f"{self.registry_url}/api/fa2/time")
+        resp.raise_for_status()
+        return float(resp.json()["server_time"])
 
     def calculate_health_score(self) -> float:
         b_score = min(25.0, 25.0 * (self.battery / 70.0))
@@ -177,6 +206,8 @@ class SatelliteNode:
             }
         self.peers = peers
         self.peers_refreshed_at = time.time()
+        # Seed the FA-2 peer directory too; after this, beacons keep it current even without the registry.
+        self.dsync.directory.merge_registry(entries)
 
     def _gossip_candidates(self, exclude: List[str]) -> List[str]:
         excluded = {p.upper() for p in exclude}
@@ -239,6 +270,9 @@ class SatelliteNode:
         await asyncio.sleep(random.uniform(1.0, GOSSIP_INTERVAL_SECONDS))  # de-synchronise the five nodes
         last_refresh = 0.0
         while True:
+            if self.silent:
+                await asyncio.sleep(GOSSIP_INTERVAL_SECONDS)
+                continue
             try:
                 if time.time() - last_refresh >= PEER_REFRESH_SECONDS or not self.peers:
                     await self.refresh_peers()
@@ -305,7 +339,12 @@ class SatelliteNode:
             if not success:
                 await asyncio.sleep(2.0)
 
+        await self.refresh_peers()  # seed the peer directory right away so beacons can start
+
         while True:
+            if self.silent:  # simulated crash: the satellite goes quiet towards everyone
+                await asyncio.sleep(2.0)
+                continue
             try:
                 self.step_telemetry()
                 await self.send_heartbeat()  # liveness (HTTP, registry)
@@ -399,6 +438,9 @@ def create_satellite_p2p_app(node: SatelliteNode) -> FastAPI:
 
     @app.post("/p2p/gossip")
     async def receive_gossip(packet: dict):
+        if node.silent:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=503, detail="satellite silent (simulated crash)")
         cid = packet.get("correlation_id", f"EVT-GOSSIP-{int(time.time()*1000)}")
         origin_id = packet.get("origin_satellite_id")
         path = packet.get("path", [])
@@ -438,6 +480,9 @@ def create_satellite_p2p_app(node: SatelliteNode) -> FastAPI:
     @app.get("/p2p/state")
     async def get_node_state():
         return node.get_node_state()
+
+    # FA-2: satellite-to-satellite algorithm messages and Mission Control's control commands
+    app.include_router(create_dsync_router(node.dsync, node.fetch_server_time))
 
     @app.post("/p2p/send_to_peer")
     async def send_to_peer(req: dict):
@@ -547,6 +592,9 @@ async def run_satellite(sat_id: str, grpc_port: int, p2p_port: int, registry_url
 
     # Start satellite-to-satellite gossip (peer-discovered, no Mission Control relay)
     asyncio.create_task(node.start_gossip_loop())
+
+    # Start FA-2 services: event shipping, beacons, leader watch
+    node.dsync.start()
 
     # Start native async gRPC Server if available
     if HAS_GRPC:

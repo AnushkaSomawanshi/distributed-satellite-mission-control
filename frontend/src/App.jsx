@@ -20,12 +20,12 @@ import RuntimeObservabilityPage from './pages/RuntimeObservabilityPage';
 
 import MissionTasksPage from './pages/MissionTasksPage';
 import ClockSyncPage from './pages/ClockSyncPage';
-import RingElectionPage from './pages/RingElectionPage';
-import MutexManagerPage from './pages/MutexManagerPage';
+import LeaderElectionPage from './pages/LeaderElectionPage';
+import CausalityLensPage from './pages/CausalityLensPage';
+import AlgorithmArenaPage from './pages/AlgorithmArenaPage';
 import GlobalSnapshotPage from './pages/GlobalSnapshotPage';
 import IncidentConsolePage from './pages/IncidentConsolePage';
 import FailureIntelligencePage from './pages/FailureIntelligencePage';
-import ExperimentLabPage from './pages/ExperimentLabPage';
 import PartitionReconciliationPage from './pages/PartitionReconciliationPage';
 
 
@@ -151,12 +151,15 @@ export default function App() {
               <Route path="/" element={<MissionOverview satellites={satellites} observatoryStats={observatoryStats} wsConnected={wsConnected} onSelectSatellite={setSelectedSatForModal} onSelectCorrelationId={setActiveCorrelationId} />} />
               <Route path="/tasks" element={<MissionTasksPage />} />
               <Route path="/clocks" element={<ClockSyncPage />} />
-              <Route path="/ring-election" element={<RingElectionPage />} />
-              <Route path="/mutex" element={<MutexManagerPage />} />
+              <Route path="/lens" element={<CausalityLensPage />} />
+              <Route path="/election" element={<LeaderElectionPage />} />
+              <Route path="/ring-election" element={<LeaderElectionPage />} />
+              <Route path="/arena" element={<AlgorithmArenaPage />} />
+              <Route path="/mutex" element={<AlgorithmArenaPage />} />
               <Route path="/snapshots" element={<GlobalSnapshotPage />} />
               <Route path="/failure-intelligence" element={<FailureIntelligencePage />} />
               <Route path="/incidents" element={<IncidentConsolePage />} />
-              <Route path="/experiments" element={<ExperimentLabPage />} />
+              <Route path="/experiments" element={<AlgorithmArenaPage />} />
               <Route path="/partition" element={<PartitionReconciliationPage />} />
 
               <Route path="/topology" element={<ConstellationMap satellites={satellites} />} />

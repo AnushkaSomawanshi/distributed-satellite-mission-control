@@ -17,7 +17,6 @@ from typing import Dict, Any, List, Optional
 from backend.registry.service_registry import global_registry
 from backend.services.task_manager import global_task_manager
 from backend.services.mutex_manager import global_mutex_engine
-from backend.services.election_manager import global_election_manager
 
 logger = logging.getLogger("ResilienceEngine")
 
@@ -38,7 +37,8 @@ class ResilienceEngine:
         leader_reg = global_registry.lookup(current_leader)
         is_leader_healthy = bool(leader_reg and leader_reg.status not in ["OFFLINE", "DISCONNECTED", "FAILED"])
 
-        last_election = global_election_manager.last_election_result
+        from backend.fa2.router import arena_runs
+        last_election = next((r for r in reversed(arena_runs) if r.get("kind") in ("election", "leader_failure")), None)
 
         return {
             "mission_continuity_pct": continuity_pct,
@@ -51,10 +51,10 @@ class ResilienceEngine:
             "tasks_affected_unresolved": affected_unresolved,
             "current_coordinator": current_leader,
             "coordinator_healthy": is_leader_healthy,
-            "last_election_id": last_election.get("event_id") if last_election else "N/A",
+            "last_election_id": last_election.get("run_id") if last_election else "N/A",
             "mutex_active_locks_count": len(global_mutex_engine.active_locks),
             "snapshot_consistency": "VALID",
-            "last_recovery_duration_ms": last_election.get("latency_ms", 0.0) if last_election else 0.0,
+            "last_recovery_duration_ms": (last_election.get("time_to_new_leader_ms") or last_election.get("agreement_observed_ms")) if last_election else None,
             "calculated_at": time.time()
         }
 

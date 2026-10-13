@@ -22,6 +22,7 @@ import httpx
 logger = logging.getLogger("TelemetryPublisher")
 
 EXCHANGE_NAME = "telemetry.exchange"
+EVENTS_EXCHANGE_NAME = "dsync.events"   # FA-2 algorithm events (SEND/RECV/LOCAL), consumed by Mission Control
 BROKER_RETRY_SECONDS = 15.0
 
 
@@ -33,7 +34,10 @@ class TelemetryPublisher:
         self._connection = None
         self._channel = None
         self._exchange = None
+        self._events_exchange = None
         self._last_connect_attempt = 0.0
+        self.event_batches_via_broker = 0
+        self.event_batches_via_fallback = 0
         self.published_via_broker = 0
         self.published_via_fallback = 0
         self.failed_publishes = 0
@@ -57,10 +61,11 @@ class TelemetryPublisher:
             self._channel = await self._connection.channel()
             # Must match the declaration in backend/communication/rabbitmq_manager.py
             self._exchange = await self._channel.declare_exchange(EXCHANGE_NAME, type="fanout")
+            self._events_exchange = await self._channel.declare_exchange(EVENTS_EXCHANGE_NAME, type="fanout")
             logger.info(f"[{self.satellite_id}] Connected to RabbitMQ; publishing telemetry to '{EXCHANGE_NAME}'")
             return True
         except Exception as exc:
-            self._connection = self._channel = self._exchange = None
+            self._connection = self._channel = self._exchange = self._events_exchange = None
             logger.warning(
                 f"[{self.satellite_id}] RabbitMQ unreachable ({exc.__class__.__name__}: {exc}); "
                 f"using HTTP fallback, retrying broker in {BROKER_RETRY_SECONDS:.0f}s"
@@ -103,9 +108,34 @@ class TelemetryPublisher:
         self.failed_publishes += 1
         return "FAILED"
 
+    async def publish_events(self, events: list) -> bool:
+        """Ship a batch of FA-2 algorithm events. Returns True once Mission Control (or the broker) has it."""
+        if await self._ensure_broker() and self._events_exchange is not None:
+            try:
+                import aio_pika
+                body = json.dumps({"producer": self.satellite_id, "events": events, "broker_mode": "RABBITMQ"}).encode()
+                await self._events_exchange.publish(aio_pika.Message(body=body, content_type="application/json"), routing_key="")
+                self.event_batches_via_broker += 1
+                return True
+            except Exception as exc:
+                logger.warning(f"[{self.satellite_id}] RabbitMQ event publish failed ({exc}); falling back to HTTP")
+                self._exchange = self._events_exchange = None
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                resp = await client.post(f"{self.registry_url}/api/fa2/events",
+                                         json={"producer": self.satellite_id, "events": events})
+            if resp.status_code == 200:
+                self.event_batches_via_fallback += 1
+                return True
+        except Exception as exc:
+            logger.debug(f"[{self.satellite_id}] Event fallback failed: {exc}")
+        return False  # kept in the satellite's pending buffer and retried
+
     def stats(self) -> Dict[str, Any]:
         return {
             "broker_connected": self.broker_connected,
+            "event_batches_via_broker": self.event_batches_via_broker,
+            "event_batches_via_fallback": self.event_batches_via_fallback,
             "published_via_broker": self.published_via_broker,
             "published_via_fallback": self.published_via_fallback,
             "failed_publishes": self.failed_publishes,

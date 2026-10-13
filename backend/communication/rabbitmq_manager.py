@@ -17,6 +17,8 @@ class RabbitMQManager:
         self.connected = False
         self.in_memory_queue: asyncio.Queue = asyncio.Queue()
         self.listeners: List[Callable[[Dict[str, Any]], None]] = []
+        self.event_listeners: List[Callable[[Dict[str, Any]], Any]] = []  # FA-2 algorithm events
+        self.event_batches_consumed = 0
         self.published_message_count = 0
         self.consumed_message_count = 0
         self.consumed_by_producer: Dict[str, int] = {}
@@ -34,12 +36,18 @@ class RabbitMQManager:
             await self._channel.declare_exchange("telemetry.exchange", type="fanout")
             queue = await self._channel.declare_queue("telemetry.queue", durable=True)
             await queue.bind("telemetry.exchange")
-            
+
+            # FA-2: satellites publish algorithm events (SEND/RECV/LOCAL) to their own fanout exchange
+            await self._channel.declare_exchange("dsync.events", type="fanout")
+            events_queue = await self._channel.declare_queue("dsync.events.queue", durable=True)
+            await events_queue.bind("dsync.events")
+
             self.connected = True
             logger.info("Connected to RabbitMQ server successfully.")
             
             # Start background consuming loop
             asyncio.create_task(self._start_consumer(queue))
+            asyncio.create_task(self._start_event_consumer(events_queue))
         except Exception as e:
             logger.warning(f"RabbitMQ server not reachable ({e}). Operating in resilient In-Memory Fallback Queue mode.")
             self.connected = False
@@ -79,6 +87,25 @@ class RabbitMQManager:
 
     async def register_listener(self, callback: Callable[[Dict[str, Any]], None]):
         self.listeners.append(callback)
+
+    async def register_event_listener(self, callback: Callable[[Dict[str, Any]], Any]):
+        self.event_listeners.append(callback)
+
+    async def _start_event_consumer(self, queue):
+        async with queue.iterator() as queue_iter:
+            async for message in queue_iter:
+                async with message.process():
+                    try:
+                        data = json.loads(message.body.decode())
+                    except (ValueError, UnicodeDecodeError) as err:
+                        logger.warning(f"[RABBITMQ EVENTS] Dropping undecodable message: {err}")
+                        continue
+                    self.event_batches_consumed += 1
+                    for cb in self.event_listeners:
+                        try:
+                            await cb(data)
+                        except Exception as err:
+                            logger.error(f"[RABBITMQ EVENTS] listener failed: {err}")
 
     async def _notify_listeners(self, message_payload: Dict[str, Any]):
         self.consumed_message_count += 1

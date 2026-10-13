@@ -11,6 +11,10 @@ import {
   Video,
   Terminal,
   Target,
+  GitBranch,
+  Crown,
+  Clock,
+  Swords,
 } from 'lucide-react';
 
 const navItems = [
@@ -27,6 +31,14 @@ const navItems = [
   { path: '/multimedia', name: 'Payload Streaming', icon: Video }
 ];
 
+// FA-2 (Unit 3): algorithms that run between the satellites
+const fa2Items = [
+  { path: '/lens', name: 'Causality Lens', icon: GitBranch },
+  { path: '/election', name: 'Leader Election', icon: Crown },
+  { path: '/clocks', name: 'Clock Sync', icon: Clock },
+  { path: '/arena', name: 'Algorithm Arena', icon: Swords }
+];
+
 
 export default function Sidebar() {
   return (
@@ -37,6 +49,28 @@ export default function Sidebar() {
         </div>
         <nav className="space-y-1">
           {navItems.map((item) => {
+            const Icon = item.icon;
+            return (
+              <NavLink
+                key={item.path}
+                to={item.path}
+                className={({ isActive }) =>
+                  `flex items-center space-x-3 px-3.5 py-2 rounded-xl text-xs font-medium transition-all duration-150 ${
+                    isActive
+                      ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 glow-cyan font-semibold'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                  }`
+                }
+              >
+                <Icon className="w-4 h-4 shrink-0" />
+                <span>{item.name}</span>
+              </NavLink>
+            );
+          })}
+        </nav>
+        <div className="px-3 pt-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Distributed algorithms</div>
+        <nav className="space-y-1">
+          {fa2Items.map((item) => {
             const Icon = item.icon;
             return (
               <NavLink

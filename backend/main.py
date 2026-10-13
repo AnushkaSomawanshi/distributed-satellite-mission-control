@@ -33,6 +33,9 @@ rabbitmq_manager = RabbitMQManager(settings.RABBITMQ_URL)
 fault_simulator = FaultSimulator(global_registry)
 
 from backend.services.event_manager import generate_correlation_id, create_event
+from backend.fa2 import router as fa2
+
+fa2.bind(fault_simulator=fault_simulator, broadcaster=websocket_manager)
 
 # Background sweep loop to detect heartbeat timeout / satellite failures
 async def heartbeat_sweeper_task():
@@ -139,6 +142,8 @@ async def lifespan(app: FastAPI):
         })
 
     await rabbitmq_manager.register_listener(handle_incoming_telemetry)
+    # FA-2: algorithm events reported by satellites (dsync.events exchange)
+    await rabbitmq_manager.register_event_listener(fa2.ingest_broker_message)
     
     sweeper_task = asyncio.create_task(heartbeat_sweeper_task())
     yield
@@ -150,6 +155,8 @@ app = FastAPI(
     title=settings.PROJECT_NAME,
     lifespan=lifespan
 )
+
+app.include_router(fa2.router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -446,6 +453,8 @@ async def set_network_partition(payload: Dict[str, Any]):
     part_a = payload.get("partition_a", ["SAT-01", "SAT-02", "SAT-03"])
     part_b = payload.get("partition_b", ["SAT-04", "SAT-05"])
     record = fault_simulator.inject_fault("NETWORK_PARTITION", "CONSTELLATION", {"partition_a": part_a, "partition_b": part_b}, source="FRONTEND")
+    # Enforced by the satellites themselves: each one refuses traffic across the partition.
+    record["satellites"] = await fa2.push_fault("PARTITION", {"groups": [part_a, part_b]})
     await websocket_manager.broadcast({
         "event_type": "NETWORK_PARTITIONED",
         "correlation_id": record["correlation_id"],
@@ -457,6 +466,7 @@ async def set_network_partition(payload: Dict[str, Any]):
 @app.post("/api/network/restore")
 async def restore_network_partition():
     res = fault_simulator.clear_partition()
+    res["satellites"] = await fa2.push_fault("HEAL", {})
     await websocket_manager.broadcast({
         "event_type": "NETWORK_RESTORED",
         "correlation_id": res["correlation_id"],
@@ -491,6 +501,16 @@ async def inject_fault(req: FaultInjectRequest):
         parameters=req.parameters,
         source="FRONTEND"
     )
+    # STOP / RESTART now act on the satellite process itself (simulated crash: it goes silent
+    # towards Mission Control and its peers), so failure detection and elections react for real.
+    if req.fault_type in ("STOP_NODE", "STOP"):
+        record["satellite"] = await fa2.push_fault("CRASH", {}, [req.target_node])
+    elif req.fault_type in ("RESTART_NODE", "RESTART"):
+        record["satellite"] = await fa2.push_fault("RECOVER", {}, [req.target_node])
+    elif req.fault_type == "CLOCK_DRIFT":
+        params = req.parameters or {}
+        record["satellite"] = await fa2.push_fault("CLOCK_DRIFT", {"offset_ms": float(params.get("offset_ms", 500.0)),
+                                                                  "drift_ppm": params.get("drift_ppm")}, [req.target_node])
     await websocket_manager.broadcast({
         "event_type": "FAULT_INJECTED",
         "correlation_id": record["correlation_id"],
@@ -504,6 +524,9 @@ async def clear_faults(target_node: Optional[str] = Query(None)):
     target_str = target_node or "ALL_NODES"
     logger.info(f"[FAULT CLEAR] Frontend → Mission Control | target={target_str}")
     cleared = fault_simulator.clear_faults(target_node)
+    await fa2.push_fault("RECOVER", {}, [target_node] if target_node else None)
+    if not target_node:
+        await fa2.push_fault("HEAL", {})
     logger.info(f"[FAULT CLEAR RESULT] Mission Control | target={target_str} | cleared_count={cleared}")
     await websocket_manager.broadcast({
         "event_type": "FAULTS_CLEARED",
@@ -589,29 +612,27 @@ async def get_event_trace(correlation_id: str):
 
 @app.post("/api/election/ring")
 async def trigger_ring_election(initiator_id: str = Query("SAT-01"), db: AsyncSession = Depends(get_db)):
-    logger.info(f"[ELECTION API] Frontend → Mission Control | endpoint=/api/election/ring | initiator={initiator_id} | protocol=Ring Leader Election")
-    result = global_registry.run_ring_election(initiator_id=initiator_id)
-    
-    evt = CommunicationEvent(
-        event_id=result["event_id"],
-        source=initiator_id,
-        destination=result["current_leader"],
-        protocol="Ring Leader Election",
-        method="RING_CIRCULATE",
-        latency_ms=result["latency_ms"],
-        status="SUCCESS",
-        payload_summary=f"Leader Elected: {result['current_leader']} (Participated: {len(result['participating_nodes'])})"
-    )
-    db.add(evt)
+    """Kept for existing pages: runs a REAL ring election among the satellites (see /api/fa2/election/run)."""
+    run = await fa2.election_run({"algorithm": "ring", "initiator": initiator_id})
+    leader = (run.get("agreement") or {}).get("leader")
+    result = {
+        **run,
+        "event_id": run["run_id"],
+        "status": "SUCCESS" if leader else "NO_AGREEMENT",
+        "protocol": "Ring election executed by the satellites",
+        "current_leader": leader,
+        "new_leader": leader,
+        "participating_nodes": run.get("participants", []),
+        "messages_exchanged": run.get("messages"),
+        "latency_ms": run.get("agreement_observed_ms"),
+    }
+    db.add(CommunicationEvent(
+        event_id=run["run_id"], source=initiator_id, destination=leader or "NONE", protocol="Ring Leader Election",
+        method="RING_ELECTION", latency_ms=run.get("agreement_observed_ms") or 0.0,
+        status="SUCCESS" if leader else "FAILED",
+        payload_summary=f"Leader {leader} agreed by {len((run.get('agreement') or {}).get('agreed_by', []))} satellites, {run.get('messages')} messages"))
     await db.commit()
-    logger.info(f"[DATABASE AUDIT] Persisted CommunicationEvent | event_id={evt.event_id} | protocol=Ring Leader Election | status=SUCCESS")
-
-    await websocket_manager.broadcast({
-        "event_type": "LEADER_ELECTION_COMPLETED",
-        "result": result,
-        "timestamp": time.time()
-    })
-    logger.info(f"[ELECTION RESULT] Mission Control → Frontend | initiator={initiator_id} | leader_elected={result['current_leader']} | participating={result['participating_nodes']} | latency={result['latency_ms']}ms")
+    await websocket_manager.broadcast({"event_type": "LEADER_ELECTION_COMPLETED", "result": result, "timestamp": time.time()})
     return result
 
 # ------------------- SYSTEM HEALTH & WEBSOCKET STREAM -------------------
@@ -619,11 +640,7 @@ async def trigger_ring_election(initiator_id: str = Query("SAT-01"), db: AsyncSe
 # ------------------- SYSTEM HEALTH & WEBSOCKET STREAM -------------------
 
 # Import FA-2 & MissionResilience Platform Services
-from backend.services.distributed_clocks import global_clock_manager
 from backend.services.task_manager import global_task_manager
-from backend.services.beacon_service import global_beacon_tracker
-from backend.services.election_manager import global_election_manager
-from backend.services.mutex_manager import global_mutex_engine
 from backend.services.snapshot_manager import global_snapshot_manager
 from backend.services.impact_analyzer import global_impact_analyzer
 from backend.services.reallocation_engine import global_reallocation_engine
@@ -637,7 +654,6 @@ from backend.services.hadoop_analytics import global_hadoop_analytics
 from backend.services.failure_intelligence import global_failure_intelligence
 from backend.services.predictive_health import global_predictive_health
 from backend.services.dependency_graph import global_dependency_graph
-from backend.services.experiment_lab import global_experiment_lab
 from backend.services.partition_reconciliation import global_partition_reconciliation
 from backend.services.security_audit import global_security_audit
 
@@ -665,13 +681,18 @@ async def evaluate_downstream_task_impact(task_id: str):
 
 @app.get("/api/experiments/compare")
 async def compare_algorithms():
-    return global_experiment_lab.compare_election_algorithms()
+    """Measured comparison only: the latest Algorithm Arena run per algorithm (empty until runs exist)."""
+    return await fa2.arena_summary()
 
 @app.post("/api/experiments/run")
 async def run_resilience_experiment_endpoint(req: dict):
-    scenario = req.get("scenario", "COORDINATOR_FAILURE")
-    iterations = req.get("iterations", 3)
-    return global_experiment_lab.run_resilience_experiment(scenario, iterations)
+    """Coordinator-failure experiment, measured on the satellites (replaces the former random numbers)."""
+    iterations = max(1, min(int(req.get("iterations", 1)), 5))
+    runs = []
+    for _ in range(iterations):
+        runs.append(await fa2.election_leader_failure({"algorithm": req.get("algorithm", "bully"), "recover": True}))
+        await asyncio.sleep(3.0)
+    return {"scenario": "COORDINATOR_FAILURE", "iterations": iterations, "runs": runs}
 
 # ------------------- PARTITION & RECONCILIATION APIs -------------------
 
@@ -702,26 +723,13 @@ async def verify_signature_endpoint(req: dict):
 
 @app.post("/api/clocks/synchronize")
 async def synchronize_physical_clocks():
-    return global_clock_manager.run_synchronization_round()
+    """Berkeley round run by the elected leader among the satellites (see /api/fa2/clocks/*)."""
+    return await fa2.clocks_berkeley()
 
 @app.get("/api/clocks/status")
 async def get_clock_status():
-    p_clocks = {sat: p.sync_history[-1] if p.sync_history else {"offset_ms": p.offset_ms} for sat, p in global_clock_manager.physical_clocks.items()}
-    l_clocks = {sat: c.value for sat, c in global_clock_manager.lamport_clocks.items()}
-    v_clocks = {sat: c.to_dict() for sat, c in global_clock_manager.vector_clocks.items()}
-    return {
-        "physical_clocks": p_clocks,
-        "lamport_clocks": l_clocks,
-        "vector_clocks": v_clocks,
-        "timestamp": time.time()
-    }
-
-@app.post("/api/clocks/event")
-async def record_clock_event(req: dict):
-    node_id = req.get("node_id", "SAT-01")
-    event_type = req.get("event_type", "GENERIC_EVENT")
-    res = global_clock_manager.record_node_event(node_id, event_type)
-    return res
+    """Clocks as the satellites report them (physical with skew, Lamport, vector)."""
+    return await fa2.clocks()
 
 # ------------------- MISSION TASKS & CAPABILITIES APIs -------------------
 
@@ -752,38 +760,12 @@ async def reassign_task_endpoint(task_id: str, req: dict):
 
 @app.get("/api/beacons")
 async def get_beacon_states():
-    sats = global_registry.list_all()
-    res = {}
-    for sat in sats:
-        age = time.time() - sat.last_heartbeat
-        res[sat.satellite_id] = global_beacon_tracker.get_beacon_status(sat.satellite_id, age)
-    return {"beacon_states": res, "timestamp": time.time()}
+    """How each satellite sees its peers, from satellite-to-satellite beacons (not Mission Control heartbeats)."""
+    st = await fa2.states()
+    return {"beacon_states": {sid: {"peers": v.get("peers"), "beacons": v.get("beacons"), "unreachable": v.get("unreachable", False)}
+                              for sid, v in st.items()}, "timestamp": time.time()}
 
-# ------------------- DISTRIBUTED MUTUAL EXCLUSION APIs -------------------
-
-@app.post("/api/mutex/request")
-async def request_mutex(req: dict):
-    requester_id = req.get("requester_id", "SAT-01")
-    resource_id = req.get("resource_id", "T-047")
-    res = await global_mutex_engine.request_resource(requester_id, resource_id)
-    await websocket_manager.broadcast({
-        "event_type": "MUTEX_REQUEST_PROCESSED",
-        "result": res,
-        "timestamp": time.time()
-    })
-    return res
-
-@app.post("/api/mutex/release")
-async def release_mutex(req: dict):
-    requester_id = req.get("requester_id", "SAT-01")
-    resource_id = req.get("resource_id", "T-047")
-    res = global_mutex_engine.release_resource(requester_id, resource_id)
-    await websocket_manager.broadcast({
-        "event_type": "MUTEX_RELEASED",
-        "result": res,
-        "timestamp": time.time()
-    })
-    return res
+# Distributed mutual exclusion now runs on the satellites: see /api/fa2/arena/mutex.
 
 # ------------------- GLOBAL STATE SNAPSHOT APIs -------------------
 
