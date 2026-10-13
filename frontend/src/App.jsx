@@ -47,25 +47,8 @@ export default function App() {
       const satList = data.satellites || [];
       setSatellites(satList);
 
-      setTelemetryHistory((prev) => {
-        if (prev.length < 3 && satList.length > 0) {
-          const now = new Date();
-          const basePoints = [];
-          for (let i = 4; i >= 0; i--) {
-            const pointTime = new Date(now.getTime() - i * 3000).toLocaleTimeString();
-            const pt = { time: pointTime };
-            satList.forEach((s) => {
-              pt[`${s.satellite_id}_battery`] = Number(s.battery || 95);
-              pt[`${s.satellite_id}_temp`] = Number(s.temperature || 25);
-              pt[`${s.satellite_id}_cpu`] = Number(s.cpu_usage || 15);
-              pt[`${s.satellite_id}_health`] = Number(s.health_score || 100);
-            });
-            basePoints.push(pt);
-          }
-          return basePoints;
-        }
-        return prev;
-      });
+      // Historical chart points are created only from validated WebSocket observations.
+      // The registry snapshot is current state, not historical telemetry.
     } catch (e) {}
 
     try {
@@ -96,7 +79,10 @@ export default function App() {
   // Live WebSocket Connection
   useEffect(() => {
     let ws;
+    let reconnectTimer;
+    let disposed = false;
     const connectWS = () => {
+      if (disposed) return;
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const wsUrl = `${protocol}//${window.location.host}/ws`;
       ws = new WebSocket(wsUrl);
@@ -104,7 +90,7 @@ export default function App() {
       ws.onopen = () => setWsConnected(true);
       ws.onclose = () => {
         setWsConnected(false);
-        setTimeout(connectWS, 3000);
+        if (!disposed) reconnectTimer = setTimeout(connectWS, 3000);
       };
       ws.onmessage = (event) => {
         try {
@@ -117,18 +103,24 @@ export default function App() {
           if (msg.event_type === 'TELEMETRY_UPDATED') {
             const telemetry = msg.telemetry?.data || msg.telemetry || {};
             const satId = telemetry.satellite_id;
-            if (satId) {
-              const timeStr = new Date().toLocaleTimeString();
+            const requiredMeasurements = ['battery', 'temperature', 'cpu_usage', 'memory_usage', 'signal_strength'];
+            const validMeasurements = requiredMeasurements.every((key) =>
+              Number.isFinite(Number(telemetry[key])) && telemetry[key] !== null && telemetry[key] !== undefined
+            );
+            if (satId && validMeasurements) {
+              const timeStr = new Date(Number(telemetry.timestamp || msg.timestamp || Date.now() / 1000) * 1000).toLocaleTimeString();
               setTelemetryHistory((prev) => {
-                const lastPoint = prev.length > 0 ? { ...prev[prev.length - 1] } : {};
+                const lastPoint = prev.length > 0 ? { ...prev[prev.length - 1} } : {};
                 const newPoint = {
                   ...lastPoint,
                   time: timeStr,
                   [`${satId}_battery`]: Number(telemetry.battery),
                   [`${satId}_temp`]: Number(telemetry.temperature),
                   [`${satId}_cpu`]: Number(telemetry.cpu_usage),
-                  [`${satId}_health`]: Number(telemetry.health_score || 100)
                 };
+                if (telemetry.health_score !== null && telemetry.health_score !== undefined && Number.isFinite(Number(telemetry.health_score))) {
+                  newPoint[`${satId}_health`] = Number(telemetry.health_score);
+                }
                 const next = [...prev, newPoint];
                 if (next.length > 35) next.shift();
                 return next;
@@ -140,7 +132,12 @@ export default function App() {
     };
 
     connectWS();
-    return () => ws && ws.close();
+    return () => {
+      disposed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (ws) ws.close();
+      setWsConnected(false);
+    };
   }, []);
 
   return (
@@ -168,7 +165,7 @@ export default function App() {
               <Route path="/concepts" element={<DistributedConcepts />} />
               <Route path="/faults" element={<FaultSimulatorPage satellites={satellites} activeFaults={activeFaults} onSelectCorrelationId={setActiveCorrelationId} />} />
               <Route path="/registry" element={<SatelliteRegistryPage satellites={satellites} onRefresh={fetchSatelliteData} onSelectSatellite={setSelectedSatForModal} />} />
-              <Route path="/telemetry" element={<LiveTelemetryPage telemetryHistory={telemetryHistory} satellites={satellites} />} />
+              <Route path="/telemetry" element={<LiveTelemetryPage telemetryHistory={telemetryHistory} satellites={satellites} wsConnected={wsConnected} />} />
               <Route path="/multimedia" element={<MultimediaPage />} />
               <Route path="/middleware" element={<MiddlewarePage />} />
               <Route path="/demo-center" element={<SystemHealthDemo />} />
