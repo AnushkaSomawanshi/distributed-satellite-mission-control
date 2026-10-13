@@ -10,13 +10,25 @@ class RegistrationRequest(BaseModel):
     p2p_port: int
     capabilities: Optional[List[str]] = None
 
+class TelemetryObservation(BaseModel):
+    """Validated measurement payload; absent readings must never become synthetic values."""
+    satellite_id: str = Field(..., min_length=1, max_length=64)
+    battery: float = Field(..., ge=0, le=100)
+    temperature: float = Field(..., ge=-100, le=200)
+    cpu_usage: float = Field(..., ge=0, le=100)
+    memory_usage: float = Field(..., ge=0, le=100)
+    signal_strength: float = Field(..., ge=0, le=100)
+    timestamp: Optional[float] = None
+    sequence_number: Optional[int] = Field(None, ge=0)
+
+
 class HeartbeatRequest(BaseModel):
-    satellite_id: str
-    battery: float = 100.0
-    temperature: float = 25.0
-    cpu_usage: float = 15.0
-    memory_usage: float = 30.0
-    signal_strength: float = 95.0
+    satellite_id: str = Field(..., min_length=1, max_length=64)
+    battery: float = Field(..., ge=0, le=100)
+    temperature: float = Field(..., ge=-100, le=200)
+    cpu_usage: float = Field(..., ge=0, le=100)
+    memory_usage: float = Field(..., ge=0, le=100)
+    signal_strength: float = Field(..., ge=0, le=100)
     node_id: Optional[str] = None
     address: Optional[str] = None
     grpc_port: Optional[int] = None
