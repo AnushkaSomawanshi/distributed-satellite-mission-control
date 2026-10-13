@@ -253,10 +253,11 @@ docker compose ps
 
 ## 18. Testing & Verification
 
-Run automated test suites inside the virtual environment:
+Install the test dependencies once (this includes `pytest-asyncio`, which the async integration test needs), then run the suite from the repository root:
 
 ```powershell
-pytest tests/
+python -m pip install -r requirements-dev.txt
+python -m pytest
 ```
 
 *For complete test matrix, view [TESTING.md](docs/TESTING.md).*

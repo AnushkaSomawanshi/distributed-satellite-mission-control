@@ -19,6 +19,8 @@ class RabbitMQManager:
         self.listeners: List[Callable[[Dict[str, Any]], None]] = []
         self.published_message_count = 0
         self.consumed_message_count = 0
+        self.consumed_by_producer: Dict[str, int] = {}
+        self.consumed_by_broker_mode: Dict[str, int] = {}
         self._connection = None
         self._channel = None
 
@@ -82,7 +84,10 @@ class RabbitMQManager:
         self.consumed_message_count += 1
         producer = message_payload.get("producer") or message_payload.get("data", {}).get("satellite_id", "SAT-UNKNOWN")
         msg_id = message_payload.get("message_id", "UNKNOWN")
-        logger.info(f"[RABBITMQ CONSUME] consumer=Mission Control | producer={producer} | msg_id={msg_id} | status=RECEIVED")
+        broker_mode = message_payload.get("broker_mode", "UNKNOWN")
+        self.consumed_by_producer[producer] = self.consumed_by_producer.get(producer, 0) + 1
+        self.consumed_by_broker_mode[broker_mode] = self.consumed_by_broker_mode.get(broker_mode, 0) + 1
+        logger.info(f"[RABBITMQ CONSUME] consumer=Mission Control | producer={producer} | mode={broker_mode} | msg_id={msg_id} | status=RECEIVED")
         for listener in self.listeners:
             try:
                 if asyncio.iscoroutinefunction(listener):
@@ -96,7 +101,11 @@ class RabbitMQManager:
         async with queue.iterator() as queue_iter:
             async for message in queue_iter:
                 async with message.process():
-                    data = json.loads(message.body.decode())
+                    try:
+                        data = json.loads(message.body.decode())
+                    except (ValueError, UnicodeDecodeError) as err:
+                        logger.warning(f"[RABBITMQ CONSUME] Dropping undecodable message: {err}")
+                        continue
                     await self._notify_listeners(data)
 
     async def _start_in_memory_consumer(self):

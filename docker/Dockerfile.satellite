@@ -5,11 +5,12 @@ WORKDIR /app
 COPY proto/ ./proto/
 COPY satellites/ ./satellites/
 
-RUN pip install --no-cache-dir fastapi uvicorn grpcio grpcio-tools httpx
+RUN pip install --no-cache-dir fastapi uvicorn grpcio grpcio-tools httpx aio-pika
 
 ENV SAT_ID=SAT-01
 ENV GRPC_PORT=5001
 ENV P2P_PORT=6001
 ENV REGISTRY_URL=http://mission-control:8000
+ENV RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
 
 CMD ["sh", "-c", "python satellites/satellite_node.py --id ${SAT_ID} --grpc-port ${GRPC_PORT} --p2p-port ${P2P_PORT} --registry ${REGISTRY_URL}"]

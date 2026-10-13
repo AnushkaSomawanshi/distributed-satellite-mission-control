@@ -53,11 +53,13 @@ services:
       - GRPC_PORT=5001
       - P2P_PORT=6001
       - REGISTRY_URL=http://mission-control:8000
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
     ports:
       - "5001:5001"
       - "6001:6001"
     depends_on:
       - mission-control
+      - rabbitmq
 
   satellite-02:
     build:
@@ -70,11 +72,13 @@ services:
       - GRPC_PORT=5002
       - P2P_PORT=6002
       - REGISTRY_URL=http://mission-control:8000
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
     ports:
       - "5002:5002"
       - "6002:6002"
     depends_on:
       - mission-control
+      - rabbitmq
 
   satellite-03:
     build:
@@ -87,11 +91,13 @@ services:
       - GRPC_PORT=5003
       - P2P_PORT=6003
       - REGISTRY_URL=http://mission-control:8000
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
     ports:
       - "5003:5003"
       - "6003:6003"
     depends_on:
       - mission-control
+      - rabbitmq
 
   satellite-04:
     build:
@@ -104,11 +110,13 @@ services:
       - GRPC_PORT=5004
       - P2P_PORT=6004
       - REGISTRY_URL=http://mission-control:8000
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
     ports:
       - "5004:5004"
       - "6004:6004"
     depends_on:
       - mission-control
+      - rabbitmq
 
   satellite-05:
     build:
@@ -121,11 +129,13 @@ services:
       - GRPC_PORT=5005
       - P2P_PORT=6005
       - REGISTRY_URL=http://mission-control:8000
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
     ports:
       - "5005:5005"
       - "6005:6005"
     depends_on:
       - mission-control
+      - rabbitmq
 
   frontend:
     build:

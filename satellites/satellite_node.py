@@ -7,7 +7,9 @@ import random
 import argparse
 import asyncio
 import logging
+import uuid
 from concurrent import futures
+from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import FastAPI, Request
@@ -24,11 +26,19 @@ try:
 except Exception:
     HAS_GRPC = False
 
+from satellites.telemetry_publisher import TelemetryPublisher
+
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s")
 logger = logging.getLogger("SatelliteNode")
 
+# Gossip / peer-discovery tuning (overridable through environment variables)
+GOSSIP_INTERVAL_SECONDS = float(os.getenv("GOSSIP_INTERVAL_SECONDS", "6.0"))
+GOSSIP_MAX_HOPS = int(os.getenv("GOSSIP_MAX_HOPS", "3"))
+PEER_REFRESH_SECONDS = float(os.getenv("PEER_REFRESH_SECONDS", "10.0"))
+
 class SatelliteNode:
-    def __init__(self, satellite_id: str, grpc_port: int, p2p_port: int, registry_url: str):
+    def __init__(self, satellite_id: str, grpc_port: int, p2p_port: int, registry_url: str,
+                 rabbitmq_url: Optional[str] = None):
         self.satellite_id = satellite_id
         self.node_id = f"NODE-{satellite_id}-{random.randint(1000, 9999)}"
         self.hostname = f"{satellite_id.lower()}.orbital.local"
@@ -57,6 +67,15 @@ class SatelliteNode:
         self.telemetry_interval = 2.0
         self.neighbor_health_map: Dict[str, Dict[str, Any]] = {}
         self.gossip_history: List[Dict[str, Any]] = []
+
+        # Peer directory learned from the registry: {satellite_id: {"address", "p2p_port", "status"}}.
+        # It is cached, so gossip keeps working from the last known view if Mission Control is unreachable.
+        self.peers: Dict[str, Dict[str, Any]] = {}
+        self.peers_refreshed_at: Optional[float] = None
+        self.gossip_stats = {"originated": 0, "forwarded": 0, "received": 0, "send_failures": 0}
+
+        # Message-oriented telemetry (RabbitMQ, with a labelled HTTP fallback)
+        self.telemetry_publisher = TelemetryPublisher(satellite_id, rabbitmq_url, self.registry_url)
 
     def calculate_health_score(self) -> float:
         b_score = min(25.0, 25.0 * (self.battery / 70.0))
@@ -128,20 +147,71 @@ class SatelliteNode:
             "timestamp": time.time()
         }
 
-    async def propagate_gossip(self, packet: dict):
-        path = packet.get("path", [])
-        hops = packet.get("hops", 0)
-        curr_path = path + [self.satellite_id]
-        
-        all_peers = [f"sat-0{i}" for i in range(1, 6) if f"SAT-0{i}" != self.satellite_id and f"sat-0{i}" not in [p.lower() for p in curr_path]]
-        if not all_peers:
+    def get_node_state(self) -> Dict[str, Any]:
+        state = self.get_telemetry_dict()
+        state["known_peers"] = self.peers
+        state["peers_refreshed_at"] = self.peers_refreshed_at
+        state["gossip_stats"] = dict(self.gossip_stats)
+        state["telemetry_publisher"] = self.telemetry_publisher.stats()
+        return state
+
+    async def refresh_peers(self) -> None:
+        """Discover peer addresses from the registry instead of guessing hostnames."""
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                resp = await client.get(f"{self.registry_url}/api/satellites")
+            resp.raise_for_status()
+            entries = resp.json().get("satellites", [])
+        except Exception as exc:
+            logger.debug(f"[{self.satellite_id} PEERS] Registry unreachable ({exc}); keeping cached peer list")
             return
+        peers = {}
+        for entry in entries:
+            sid = entry.get("satellite_id")
+            if not sid or sid == self.satellite_id or not entry.get("address") or not entry.get("p2p_port"):
+                continue
+            peers[sid] = {
+                "address": entry["address"],
+                "p2p_port": int(entry["p2p_port"]),
+                "status": entry.get("status", "UNKNOWN"),
+            }
+        self.peers = peers
+        self.peers_refreshed_at = time.time()
 
-        target_peer = random.choice(all_peers)
-        peer_num = int(target_peer.split("-")[-1])
-        dest_p2p_port = 6000 + peer_num
-        dest_address = target_peer
+    def _gossip_candidates(self, exclude: List[str]) -> List[str]:
+        excluded = {p.upper() for p in exclude}
+        return [
+            sid for sid, info in self.peers.items()
+            if sid.upper() not in excluded and info.get("status") not in ("OFFLINE", "DISCONNECTED")
+        ]
 
+    def build_gossip_packet(self) -> Dict[str, Any]:
+        return {
+            "correlation_id": f"EVT-GOSSIP-{self.satellite_id}-{uuid.uuid4().hex[:8]}",
+            "origin_satellite_id": self.satellite_id,
+            "origin_status": self.status,
+            "origin_health": self.calculate_health_score(),
+            "origin_battery": round(self.battery, 2),
+            "origin_temp": round(self.temperature, 2),
+            "hops": 0,
+            "path": [],
+            "timestamp": time.time(),
+        }
+
+    async def propagate_gossip(self, packet: dict) -> bool:
+        """Forward a gossip packet to one random peer that is not already on its path."""
+        hops = packet.get("hops", 0)
+        curr_path = packet.get("path", []) + [self.satellite_id]
+        if hops >= GOSSIP_MAX_HOPS:
+            return False
+
+        candidates = self._gossip_candidates(exclude=curr_path + [packet.get("origin_satellite_id", "")])
+        if not candidates:
+            return False
+
+        target_id = random.choice(candidates)
+        target = self.peers[target_id]
+        url = f"http://{target['address']}:{target['p2p_port']}/p2p/gossip"
         gossip_payload = {
             "correlation_id": packet.get("correlation_id"),
             "origin_satellite_id": packet.get("origin_satellite_id"),
@@ -153,14 +223,33 @@ class SatelliteNode:
             "path": curr_path,
             "timestamp": time.time()
         }
-
-        url = f"http://{dest_address}:{dest_p2p_port}/p2p/gossip"
         try:
             async with httpx.AsyncClient(timeout=2.0) as client:
-                await client.post(url, json=gossip_payload)
-                logger.info(f"[{self.satellite_id} GOSSIP PROPAGATED] Forwarded state to {target_peer.upper()} | Hops={hops+1} | Path={'->'.join(curr_path)}")
-        except Exception:
-            pass
+                resp = await client.post(url, json=gossip_payload)
+            resp.raise_for_status()
+            logger.info(f"[{self.satellite_id} GOSSIP SENT] -> {target_id} | origin={packet.get('origin_satellite_id')} | hops={hops+1} | path={'->'.join(curr_path)}")
+            return True
+        except Exception as exc:
+            self.gossip_stats["send_failures"] += 1
+            logger.warning(f"[{self.satellite_id} GOSSIP FAILED] -> {target_id} at {url}: {exc.__class__.__name__}: {exc}")
+            return False
+
+    async def start_gossip_loop(self):
+        """Periodically originate a gossip round with this satellite's own state."""
+        await asyncio.sleep(random.uniform(1.0, GOSSIP_INTERVAL_SECONDS))  # de-synchronise the five nodes
+        last_refresh = 0.0
+        while True:
+            try:
+                if time.time() - last_refresh >= PEER_REFRESH_SECONDS or not self.peers:
+                    await self.refresh_peers()
+                    last_refresh = time.time()
+                if await self.propagate_gossip(self.build_gossip_packet()):
+                    self.gossip_stats["originated"] += 1
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.error(f"[{self.satellite_id}] Error in gossip loop: {exc}")
+            await asyncio.sleep(GOSSIP_INTERVAL_SECONDS)
 
     async def register_with_mission_control(self) -> bool:
         url = f"{self.registry_url}/api/satellites/register"
@@ -204,9 +293,10 @@ class SatelliteNode:
             async with httpx.AsyncClient(timeout=3.0) as client:
                 resp = await client.post(url, json=payload)
                 if resp.status_code != 200:
+                    logger.warning(f"[{self.satellite_id}] Heartbeat rejected (HTTP {resp.status_code}); re-registering")
                     await self.register_with_mission_control()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(f"[{self.satellite_id}] Heartbeat to Mission Control failed: {exc.__class__.__name__}: {exc}")
 
     async def start_autonomous_loop(self):
         # Guarantee registration retry until Mission Control acknowledges registration
@@ -218,8 +308,9 @@ class SatelliteNode:
         while True:
             try:
                 self.step_telemetry()
-                await self.send_heartbeat()
-                await asyncio.sleep(2.0)
+                await self.send_heartbeat()  # liveness (HTTP, registry)
+                await self.telemetry_publisher.publish(self.get_telemetry_dict())  # data stream (RabbitMQ)
+                await asyncio.sleep(2.0)  # fixed cadence: heartbeat timeouts (5s/10s) assume ~2s
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -332,16 +423,21 @@ def create_satellite_p2p_app(node: SatelliteNode) -> FastAPI:
             "received_at": time.time()
         })
         
-        logger.info(f"[{node.satellite_id} GOSSIP] Received state update from {origin_id} via path {'->'.join(path)} (hops={hops})")
-        
-        if hops < 3:
-            asyncio.create_task(node.propagate_gossip(packet))
+        node.gossip_history = node.gossip_history[-200:]
+        node.gossip_stats["received"] += 1
+        logger.info(f"[{node.satellite_id} GOSSIP RECEIVED] origin={origin_id} via {'->'.join(path) or origin_id} (hops={hops})")
+
+        if hops < GOSSIP_MAX_HOPS:
+            async def _forward():
+                if await node.propagate_gossip(packet):
+                    node.gossip_stats["forwarded"] += 1
+            asyncio.create_task(_forward())
             
         return {"status": "RECEIVED", "receiver": node.satellite_id, "hops": hops + 1, "correlation_id": cid}
 
     @app.get("/p2p/state")
     async def get_node_state():
-        return node.get_telemetry_dict()
+        return node.get_node_state()
 
     @app.post("/p2p/send_to_peer")
     async def send_to_peer(req: dict):
@@ -442,11 +538,15 @@ async def start_grpc_server(node: SatelliteNode):
     logger.info(f"gRPC Server for {node.satellite_id} started on port {node.grpc_port}")
     await server.wait_for_termination()
 
-async def run_satellite(sat_id: str, grpc_port: int, p2p_port: int, registry_url: str):
-    node = SatelliteNode(sat_id, grpc_port, p2p_port, registry_url)
-    
-    # Start Autonomous Telemetry Loop
+async def run_satellite(sat_id: str, grpc_port: int, p2p_port: int, registry_url: str,
+                        rabbitmq_url: Optional[str] = None):
+    node = SatelliteNode(sat_id, grpc_port, p2p_port, registry_url, rabbitmq_url=rabbitmq_url)
+
+    # Start Autonomous Telemetry Loop (heartbeat + RabbitMQ telemetry)
     asyncio.create_task(node.start_autonomous_loop())
+
+    # Start satellite-to-satellite gossip (peer-discovered, no Mission Control relay)
+    asyncio.create_task(node.start_gossip_loop())
 
     # Start native async gRPC Server if available
     if HAS_GRPC:
@@ -466,6 +566,8 @@ if __name__ == "__main__":
     parser.add_argument("--grpc-port", type=int, default=5001, help="gRPC Port")
     parser.add_argument("--p2p-port", type=int, default=6001, help="P2P HTTP Port")
     parser.add_argument("--registry", type=str, default="http://localhost:8000", help="Mission Control Registry URL")
-    
+    parser.add_argument("--rabbitmq", type=str, default=os.getenv("RABBITMQ_URL"),
+                        help="RabbitMQ URL for telemetry publishing (default: $RABBITMQ_URL; HTTP fallback if unset/unreachable)")
+
     args = parser.parse_args()
-    asyncio.run(run_satellite(args.id, args.grpc_port, args.p2p_port, args.registry))
+    asyncio.run(run_satellite(args.id, args.grpc_port, args.p2p_port, args.registry, rabbitmq_url=args.rabbitmq))

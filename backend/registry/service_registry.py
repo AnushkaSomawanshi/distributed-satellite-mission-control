@@ -130,6 +130,34 @@ class SatelliteRegistry:
 
         return reg
 
+    def update_metrics(
+        self,
+        satellite_id: str,
+        health_score: float,
+        battery: float,
+        temperature: float,
+        cpu_usage: float,
+        memory_usage: float,
+        signal_strength: float,
+    ) -> Optional[SatelliteRegistration]:
+        """
+        Update measurement fields from the RabbitMQ telemetry stream WITHOUT touching liveness.
+
+        Liveness (last_heartbeat / status transitions) is owned exclusively by the HTTP heartbeat
+        path. A broker can deliver buffered messages after a node has died, so treating a telemetry
+        message as proof of life would mask real failures.
+        """
+        reg = self._registry.get(satellite_id)
+        if reg is None:
+            return None
+        reg.health_score = health_score
+        reg.battery = battery
+        reg.temperature = temperature
+        reg.cpu_usage = cpu_usage
+        reg.memory_usage = memory_usage
+        reg.signal_strength = signal_strength
+        return reg
+
     def set_status(self, satellite_id: str, status: str, source: str = "SYSTEM") -> bool:
         if satellite_id in self._registry:
             reg = self._registry[satellite_id]

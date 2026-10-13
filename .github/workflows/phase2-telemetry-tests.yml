@@ -4,11 +4,21 @@ on:
   push:
     branches: [main]
     paths:
+      - "backend/**"
+      - "satellites/**"
+      - "tests/**"
+      - "requirements*.txt"
+      - "pytest.ini"
       - "backend/models/schemas.py"
       - "tests/test_telemetry_schema.py"
       - ".github/workflows/phase2-telemetry-tests.yml"
   pull_request:
     paths:
+      - "backend/**"
+      - "satellites/**"
+      - "tests/**"
+      - "requirements*.txt"
+      - "pytest.ini"
       - "backend/models/schemas.py"
       - "tests/test_telemetry_schema.py"
       - ".github/workflows/phase2-telemetry-tests.yml"
@@ -28,3 +38,17 @@ jobs:
         run: python -m pip install "pydantic>=1.10,<3"
       - name: Run telemetry schema tests
         run: python -m unittest discover -s tests -p "test_telemetry_schema.py" -v
+
+  full-test-suite:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Run full pytest suite
+        run: python -m pytest -v

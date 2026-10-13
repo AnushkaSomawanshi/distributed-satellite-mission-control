@@ -109,21 +109,32 @@ async def lifespan(app: FastAPI):
             signal_strength=observation.signal_strength,
             is_online=True
         )
-        global_registry.update_heartbeat(
+        # Telemetry updates measurements only; liveness is decided by the heartbeat path.
+        reg = global_registry.update_metrics(
             satellite_id=sat_id,
             health_score=score,
-            status=status,
             battery=observation.battery,
             temperature=observation.temperature,
             cpu_usage=observation.cpu_usage,
             memory_usage=observation.memory_usage,
             signal_strength=observation.signal_strength
         )
+        if reg is None:
+            logger.warning("Ignoring telemetry from unregistered satellite %s", sat_id)
+            return
+
+        sat_data["health_score"] = score
+        sat_data["status"] = reg.status
+        position = payload.get("data", {}).get("position")
+        if isinstance(position, dict):
+            sat_data["position"] = position
 
         # Only validated observations are broadcast as telemetry.
         await websocket_manager.broadcast({
             "event_type": "TELEMETRY_UPDATED",
             "telemetry": {"data": sat_data},
+            "broker_mode": payload.get("broker_mode"),
+            "message_id": payload.get("message_id"),
             "timestamp": time.time()
         })
 
@@ -203,23 +214,15 @@ async def receive_heartbeat(req: HeartbeatRequest):
     else:
         logger.info(f"[HEARTBEAT] Mission Control ← {req.satellite_id} | status=RECEIVED | health={score}% | battery={req.battery}% | temp={req.temperature}°C")
 
-    # Broadcast telemetry update over WebSocket
+    # Heartbeats prove liveness only. The live telemetry stream reaches the frontend through the
+    # RabbitMQ consumer (handle_incoming_telemetry), so each sample is broadcast exactly once.
     await websocket_manager.broadcast({
-        "event_type": "TELEMETRY_UPDATED",
-        "telemetry": {
-            "satellite_id": req.satellite_id,
-            "battery": req.battery,
-            "temperature": req.temperature,
-            "cpu_usage": req.cpu_usage,
-            "memory_usage": req.memory_usage,
-            "signal_strength": req.signal_strength,
-            "health_score": score,
-            "status": status,
-            "timestamp": time.time()
-        },
+        "event_type": "HEARTBEAT_RECEIVED",
+        "satellite_id": req.satellite_id,
+        "node_status": reg.status,
         "timestamp": time.time()
     })
-    
+
     return {
         "status": "SUCCESS",
         "satellite_id": req.satellite_id,
@@ -228,6 +231,19 @@ async def receive_heartbeat(req: HeartbeatRequest):
         "last_heartbeat": reg.last_heartbeat,
         "breakdown": breakdown
     }
+
+@app.post("/api/telemetry/ingest")
+async def ingest_telemetry_fallback(payload: Dict[str, Any]):
+    """
+    HTTP bridge used by satellites ONLY when they cannot reach a RabbitMQ broker
+    (e.g. local runs without Docker). The sample is published into Mission Control's
+    message bus, so it still flows through the same consumer pipeline, and is labelled
+    with broker_mode so the UI never claims RabbitMQ delivered it.
+    """
+    if not isinstance(payload, dict) or not payload.get("satellite_id"):
+        raise HTTPException(status_code=422, detail="Telemetry payload must include satellite_id")
+    envelope = await rabbitmq_manager.publish_telemetry(payload)
+    return {"status": "ACCEPTED", "broker_mode": envelope["broker_mode"], "message_id": envelope["message_id"]}
 
 @app.get("/api/satellites")
 async def list_satellites():
@@ -513,8 +529,12 @@ async def get_observatory_stats():
         "websocket": websocket_manager.get_stats(),
         "rabbitmq": {
             "connected": rabbitmq_manager.connected,
+            # published_count = messages Mission Control itself put on the bus (HTTP fallback bridge).
+            # Satellites publish directly to the broker, so their output shows up in consumed_by_producer.
             "published_count": rabbitmq_manager.published_message_count,
-            "consumed_count": rabbitmq_manager.consumed_message_count
+            "consumed_count": rabbitmq_manager.consumed_message_count,
+            "consumed_by_producer": dict(rabbitmq_manager.consumed_by_producer),
+            "consumed_by_broker_mode": dict(rabbitmq_manager.consumed_by_broker_mode)
         },
         "webrtc": webrtc_manager.get_status(),
         "satellites_count": len(global_registry.list_all()),
