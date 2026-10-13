@@ -110,7 +110,7 @@ export default function App() {
             if (satId && validMeasurements) {
               const timeStr = new Date(Number(telemetry.timestamp || msg.timestamp || Date.now() / 1000) * 1000).toLocaleTimeString();
               setTelemetryHistory((prev) => {
-                const lastPoint = prev.length > 0 ? { ...prev[prev.length - 1} } : {};
+                const lastPoint = prev.length > 0 ? { ...prev[prev.length - 1] } : {};
                 const newPoint = {
                   ...lastPoint,
                   time: timeStr,
