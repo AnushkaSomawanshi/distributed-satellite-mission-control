@@ -242,3 +242,18 @@ This audit now contains a source-level route inventory and configuration review.
 | Actual recovery/latency/resource measurements | Pending execution |
 
 **Phase 1 is not marked runtime-complete until the pending checks are executed and their observed outputs are recorded.** A GitHub source audit cannot truthfully certify the user's Docker Desktop state or browser behavior. The next audit update should attach command output, test logs, and measured timestamps instead of converting the plan into assumed pass results.
+
+
+## 13. Runtime baseline automation added
+
+A repeatable GitHub Actions workflow and smoke probe have been added on the Phase 1 runtime-baseline branch:
+
+- Workflow: `.github/workflows/phase1-runtime-baseline.yml`
+- Probe: `scripts/phase1_baseline.py`
+- Triggers: relevant pull requests and manual `workflow_dispatch`.
+- Checks: Compose config validation, stack build/start, backend/frontend HTTP response, expected five-node registration, observatory stats, task API, ring-election endpoint, coordinator-failure simulation endpoint, and WebSocket handshake.
+- Captures `docker compose ps` and recent service logs even on failure, then tears down the disposable CI stack.
+
+The probe deliberately labels the coordinator-failure API as a **simulation endpoint**. It does not claim to terminate a real satellite container or prove real failover. It also explicitly lists checks that need a dedicated controlled scenario: actual coordinator container termination, interrupted task recovery and duplicate-execution assertion, database persistence after restart, and browser interaction/console testing.
+
+**Execution status:** the workflow has been authored but must run in GitHub Actions before any check is considered passed. If Actions are disabled or a required image/service fails to build, use the captured logs to fix the issue and rerun. This addition does not replace the Windows/Docker Desktop baseline when local-environment behavior is the acceptance target.
