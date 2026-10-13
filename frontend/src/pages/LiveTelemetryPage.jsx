@@ -2,10 +2,10 @@ import React, { useState } from 'react';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from 'recharts';
 import { Activity, Battery, Thermometer, Cpu, Radio, ShieldAlert, HeartPulse } from 'lucide-react';
 
-export default function LiveTelemetryPage({ telemetryHistory = [], satellites = [] }) {
+export default function LiveTelemetryPage({ telemetryHistory = [], satellites = [], wsConnected = false }) {
   const [selectedSatellite, setSelectedSatellite] = useState('ALL');
 
-  const sat02Status = satellites.find(s => s.satellite_id === 'SAT-02')?.status || 'HEALTHY';
+  const sat02Status = satellites.find(s => s.satellite_id === 'SAT-02')?.status || 'UNKNOWN';
 
   return (
     <div className="space-y-6 pb-12">
@@ -36,14 +36,25 @@ export default function LiveTelemetryPage({ telemetryHistory = [], satellites = 
             </select>
           </div>
 
-          <span className="px-3 py-1 bg-emerald-500/20 text-emerald-300 text-xs font-bold rounded-lg font-orbitron border border-emerald-500/40 flex items-center space-x-1">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping mr-1"></span>
-            <span>WEBSOCKET LIVE</span>
+          <span className={`px-3 py-1 text-xs font-bold rounded-lg font-orbitron border flex items-center space-x-1 ${wsConnected ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : 'bg-amber-500/10 text-amber-300 border-amber-500/30'}`}>
+            <span className={`w-2 h-2 rounded-full mr-1 ${wsConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`}></span>
+            <span>{wsConnected ? 'WEBSOCKET CONNECTED' : 'WEBSOCKET DISCONNECTED'}</span>
           </span>
         </div>
       </div>
 
-      {sat02Status === 'OFFLINE' && (
+      {telemetryHistory.length === 0 && (
+        <div className="p-4 bg-slate-900/70 border border-slate-700 rounded-2xl text-sm text-slate-300" role="status">
+          <strong className="text-slate-100">No telemetry observations received yet.</strong>
+          <p className="text-xs text-slate-400 mt-1">Charts will populate only after valid telemetry samples arrive. Registry values are current state, not historical chart points.</p>
+        </div>
+      )}
+
+      {sat02Status === 'UNKNOWN' && (
+        <div className="p-3 bg-slate-900/70 border border-slate-700 rounded-xl text-xs text-slate-400" role="status">SAT-02 status is unknown because no registry record is available.</div>
+      )}
+
+      {(sat02Status === 'OFFLINE' || sat02Status === 'DISCONNECTED') && (
         <div className="p-4 bg-rose-500/10 border border-rose-500/30 rounded-2xl flex items-center justify-between text-xs font-mono text-rose-300">
           <div className="flex items-center space-x-2">
             <ShieldAlert className="w-5 h-5 text-rose-400 shrink-0" />
