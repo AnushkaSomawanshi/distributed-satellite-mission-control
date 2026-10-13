@@ -51,7 +51,7 @@ function MetricCard({ icon: Icon, label, value, detail, tone = 'cyan' }) {
   </div>;
 }
 
-export default function MissionOverview({ satellites = [], observatoryStats = {}, onSelectSatellite }) {
+export default function MissionOverview({ satellites = [], observatoryStats = {}, wsConnected = false, onSelectSatellite }) {
   const [selectedId, setSelectedId] = useState('');
   const [view, setView] = useState('Fleet');
   const fleet = useMemo(
@@ -62,7 +62,7 @@ export default function MissionOverview({ satellites = [], observatoryStats = {}
   const healthy = fleet.filter(s => healthyStates.includes(String(s.status || '').toUpperCase())).length;
   const warnings = fleet.filter(s => warningStates.includes(String(s.status || '').toUpperCase())).length;
   const critical = fleet.filter(s => criticalStates.includes(String(s.status || '').toUpperCase())).length;
-  const connected = Boolean(observatoryStats?.websocket?.connected ?? observatoryStats?.websocket?.is_connected);
+  const connected = Boolean(wsConnected);
   const streamRate = observatoryStats?.websocket?.messages_per_second;
   const brokerKnown = observatoryStats?.rabbitmq?.connected;
   const brokerConnected = brokerKnown === true;
@@ -225,7 +225,7 @@ export default function MissionOverview({ satellites = [], observatoryStats = {}
         <div className="orbit-pro-pass-preview">
           <div className="orbit-pro-pass-preview-icon"><Clock3 size={17} /></div>
           <div><strong>Ground-station pass predictions</strong><span>Not available from the current overview API. No pass times are fabricated.</span></div>
-          <NavLink to="/missions" aria-label="Open mission tasks"><ChevronRight size={15} /></NavLink>
+          <NavLink to="/tasks" aria-label="Open mission tasks"><ChevronRight size={15} /></NavLink>
         </div>
       </article>
     </section>
