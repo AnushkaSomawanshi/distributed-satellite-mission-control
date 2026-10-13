@@ -183,6 +183,52 @@ export default function MissionOverview({ satellites = [], observatoryStats = {}
       </article>
     </section>
 
+
+    <section className="orbit-pro-analytics-grid">
+      <article className="orbit-pro-panel">
+        <PanelHeading icon={Activity} title="Fleet telemetry comparison" subtitle="Latest reported values by satellite · not historical trends" action={<NavLink to="/telemetry" className="orbit-pro-text-link">Full telemetry <ChevronRight size={12} /></NavLink>} />
+        <div className="orbit-pro-chart-legend"><span><i className="chart-battery" /> Battery</span><span><i className="chart-health" /> Health</span><span><i className="chart-cpu" /> CPU</span></div>
+        <div className="orbit-pro-telemetry-chart">
+          <div className="orbit-pro-chart-axis"><span>100%</span><span>75%</span><span>50%</span><span>25%</span><span>0%</span></div>
+          <div className="orbit-pro-chart-rows">
+            {fleet.map(s => {
+              const battery = s.battery == null || s.battery === '' ? null : Math.max(0, Math.min(100, Number(s.battery)));
+              const health = s.health_score == null || s.health_score === '' ? null : Math.max(0, Math.min(100, Number(s.health_score)));
+              const cpu = s.cpu_usage == null || s.cpu_usage === '' ? null : Math.max(0, Math.min(100, Number(s.cpu_usage)));
+              return <div className="orbit-pro-chart-row" key={s.satellite_id}>
+                <div className="orbit-pro-chart-node"><span className={`orbit-pro-mini-dot orbit-pro-mini-dot--${stateKind(s.status)}`} />{s.satellite_id}</div>
+                <div className="orbit-pro-chart-track"><span className="chart-battery-fill" style={{width: battery == null ? '0%' : `${battery}%`}} />{battery == null && <i>—</i>}</div>
+                <div className="orbit-pro-chart-track"><span className="chart-health-fill" style={{width: health == null ? '0%' : `${health}%`}} />{health == null && <i>—</i>}</div>
+                <div className="orbit-pro-chart-track"><span className="chart-cpu-fill" style={{width: cpu == null ? '0%' : `${cpu}%`}} />{cpu == null && <i>—</i>}</div>
+              </div>;
+            })}
+            {!fleet.length && <div className="orbit-pro-empty">Fleet comparisons appear when satellite telemetry is received.</div>}
+          </div>
+        </div>
+        <div className="orbit-pro-chart-caption">Bars use the most recent values available from each node. Missing measurements are left blank instead of estimated.</div>
+      </article>
+
+      <article className="orbit-pro-panel">
+        <PanelHeading icon={Globe2} title="Fleet state distribution" subtitle="Current reported node states" />
+        <div className="orbit-pro-state-chart-wrap">
+          <div className="orbit-pro-donut" style={{background: fleet.length ? `conic-gradient(#2dd4bf 0% ${healthy / fleet.length * 100}%, #fbbf24 ${healthy / fleet.length * 100}% ${(healthy + warnings) / fleet.length * 100}%, #fb7185 ${(healthy + warnings) / fleet.length * 100}% ${(healthy + warnings + critical) / fleet.length * 100}%, #526579 ${(healthy + warnings + critical) / fleet.length * 100}% 100%)` : 'conic-gradient(#24374a 0% 100%)'}}>
+            <div><strong>{fleet.length.toString().padStart(2, '0')}</strong><span>REGISTERED</span></div>
+          </div>
+          <div className="orbit-pro-state-legend">
+            <div><i className="state-good" /><span>Healthy / online</span><strong>{fleet.length ? healthy : '—'}</strong></div>
+            <div><i className="state-warning" /><span>Warning / suspected</span><strong>{fleet.length ? warnings : '—'}</strong></div>
+            <div><i className="state-bad" /><span>Offline / critical</span><strong>{fleet.length ? critical : '—'}</strong></div>
+            <div><i className="state-unknown" /><span>Other / unknown</span><strong>{fleet.length ? Math.max(0, fleet.length - healthy - warnings - critical) : '—'}</strong></div>
+          </div>
+        </div>
+        <div className="orbit-pro-chart-caption">Distribution is calculated from the current API response; unknown states are not counted as healthy.</div>
+        <div className="orbit-pro-pass-preview">
+          <div className="orbit-pro-pass-preview-icon"><Clock3 size={17} /></div>
+          <div><strong>Ground-station pass predictions</strong><span>Not available from the current overview API. No pass times are fabricated.</span></div>
+          <NavLink to="/missions" aria-label="Open mission tasks"><ChevronRight size={15} /></NavLink>
+        </div>
+      </article>
+    </section>
     <footer className="orbit-pro-footnote"><span><CheckCircle2 size={12} /> Live values are sourced from the connected backend.</span><span>Earth imagery and orbital paths are illustrative; this view does not calculate real satellite positions.</span></footer>
   </div>;
 }
