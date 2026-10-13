@@ -151,7 +151,7 @@ export default function App() {
           <Sidebar />
           <main className="flex-1 p-6 overflow-y-auto">
             <Routes>
-              <Route path="/" element={<MissionOverview satellites={satellites} observatoryStats={observatoryStats} onSelectSatellite={setSelectedSatForModal} onSelectCorrelationId={setActiveCorrelationId} />} />
+              <Route path="/" element={<MissionOverview satellites={satellites} observatoryStats={observatoryStats} wsConnected={wsConnected} onSelectSatellite={setSelectedSatForModal} onSelectCorrelationId={setActiveCorrelationId} />} />
               <Route path="/tasks" element={<MissionTasksPage />} />
               <Route path="/clocks" element={<ClockSyncPage />} />
               <Route path="/ring-election" element={<RingElectionPage />} />
