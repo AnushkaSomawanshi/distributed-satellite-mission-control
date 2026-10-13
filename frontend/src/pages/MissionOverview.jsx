@@ -153,6 +153,28 @@ export default function MissionOverview({ satellites = [], observatoryStats = {}
       </div>
     </section>
 
+
+    <section className="orbit-pro-map-section">
+      <article className="orbit-pro-panel orbit-pro-live-map">
+        <PanelHeading icon={Globe2} title="Global map & ground coverage" subtitle="Interactive geographic reference · OpenStreetMap" action={<span className="orbit-pro-map-live-label"><span /> BASE MAP LOADED</span>} />
+        <div className="orbit-pro-map-layout">
+          <div className="orbit-pro-map-frame">
+            <iframe title="Interactive OpenStreetMap global reference" src="https://www.openstreetmap.org/export/embed.html?bbox=-180%2C-75%2C180%2C80&layer=mapnik" loading="lazy" referrerPolicy="no-referrer" />
+            <div className="orbit-pro-map-overlay"><Globe2 size={13} /><span>GLOBAL MAP REFERENCE</span></div>
+          </div>
+          <aside className="orbit-pro-map-details">
+            <div className="orbit-pro-map-detail-title"><Layers3 size={16} /><div><strong>Ground coverage</strong><span>Map layer and network context</span></div></div>
+            <div className="orbit-pro-map-stat"><span>Registered satellites</span><strong>{fleet.length || '—'}</strong></div>
+            <div className="orbit-pro-map-stat"><span>Reported healthy nodes</span><strong className="map-value-good">{fleet.length ? healthy : '—'}</strong></div>
+            <div className="orbit-pro-map-stat"><span>Ground station coordinates</span><strong>Not provided</strong></div>
+            <div className="orbit-pro-map-stat"><span>Live satellite coordinates</span><strong>Not provided</strong></div>
+            <div className="orbit-pro-map-note"><CircleDot size={13} /><span>The map is interactive, but live satellite pins, ground tracks, coverage footprints and pass predictions require coordinates/orbital elements from the backend. They are intentionally not fabricated.</span></div>
+            <NavLink to="/topology" className="orbit-pro-map-link">Open fleet topology <ChevronRight size={13} /></NavLink>
+          </aside>
+        </div>
+      </article>
+    </section>
+
     <section className="orbit-pro-lower-grid">
       <article className="orbit-pro-panel orbit-pro-fleet-panel">
         <PanelHeading icon={Satellite} title="Satellite fleet" subtitle="Select a node to inspect its latest reported state" action={<NavLink to="/registry" className="orbit-pro-text-link">Full registry <ChevronRight size={12} /></NavLink>} />
