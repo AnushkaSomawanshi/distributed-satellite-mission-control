@@ -1,6 +1,8 @@
 name: Phase 1 Runtime Baseline
 
 on:
+  push:
+    branches: [main]
   pull_request:
     paths:
       - "docker-compose.yml"
