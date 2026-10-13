@@ -16,30 +16,30 @@ export default function Header({ systemHealth, wsConnected }) {
   const isHealthy = (systemHealth?.status === 'HEALTHY');
 
   return (
-    <header className="sticky top-0 z-50 glass-panel border-b border-slate-800/80 px-6 py-3.5 flex flex-wrap items-center justify-between gap-4">
+    <header className="sticky top-0 z-50 glass-panel border-b border-slate-800/80 px-4 py-2 flex flex-nowrap items-center justify-between gap-3">
       {/* Brand & Title */}
-      <div className="flex items-center space-x-3.5">
-        <div className="p-2.5 bg-cyan-500/10 border border-cyan-500/30 rounded-xl glow-cyan text-cyan-400">
-          <Satellite className="w-6 h-6 animate-pulse" />
+      <div className="flex items-center space-x-3 shrink-0">
+        <div className="p-2 bg-cyan-500/10 border border-cyan-500/30 rounded-lg glow-cyan text-cyan-400">
+          <Satellite className="w-5 h-5 animate-pulse" />
         </div>
         <div>
           <div className="flex items-center space-x-2">
-            <h1 className="text-lg font-bold text-slate-100 tracking-wider font-orbitron">
+            <h1 className="text-base font-bold text-slate-100 tracking-wider font-orbitron">
               ORBITTRACK
             </h1>
-            <span className="px-2 py-0.5 text-xs font-semibold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 rounded-md">
+            <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 rounded-md">
               LIVE OPERATIONS
             </span>
           </div>
-          <p className="text-xs text-slate-400 font-mono">
+          <p className="text-[10px] text-slate-400 font-mono">
             Satellite Fleet Operations
           </p>
         </div>
       </div>
 
       {/* Real-time Telemetry & Health Badges */}
-      <div className="flex items-center space-x-6 text-xs font-mono">
-        <div className="flex items-center space-x-2 bg-slate-900/80 border border-slate-800 px-3 py-1.5 rounded-lg">
+      <div className="flex min-w-0 items-center space-x-2 text-[10px] font-mono">
+        <div className="flex items-center space-x-2 bg-slate-900/80 border border-slate-800 px-2 py-1 rounded-lg">
           <Activity className="w-4 h-4 text-cyan-400" />
           <span className="text-slate-400">Satellites:</span>
           <span className="font-bold text-slate-200">{healthySats ?? '—'} / {totalSats ?? '—'} Active</span>
