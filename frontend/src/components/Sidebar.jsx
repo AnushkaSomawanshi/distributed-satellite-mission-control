@@ -30,7 +30,7 @@ const navItems = [
 
 export default function Sidebar() {
   return (
-    <aside className="w-64 glass-panel border-r border-slate-800/80 p-4 flex flex-col justify-between shrink-0 min-h-[calc(100vh-4rem)]">
+    <aside className="w-56 glass-panel border-r border-slate-800/80 p-3 flex flex-col justify-between shrink-0 min-h-[calc(100vh-4rem)]">
       <div className="space-y-6">
         <div className="px-3 py-2 text-xs font-semibold text-cyan-400/80 uppercase tracking-wider font-orbitron">
           ORBITTRACK
