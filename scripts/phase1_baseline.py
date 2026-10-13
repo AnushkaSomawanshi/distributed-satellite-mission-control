@@ -77,7 +77,7 @@ def main():
         return f"HTTP {status}; task_count={len(body.get('tasks', []))}"
 
     def election():
-        status, body = request_json(base + "/api/election/ring?initiator_id=SAT-01", method="POST", payload={})
+        status, body = request_json(base + "/api/election/ring?initiator_id=SAT-01", method="POST")
         return f"HTTP {status}; response_keys={sorted(body)[:10]}"
 
     def scenario():
