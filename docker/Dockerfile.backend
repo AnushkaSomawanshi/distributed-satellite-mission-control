@@ -4,11 +4,12 @@ WORKDIR /app
 
 COPY proto/ ./proto/
 COPY backend/ ./backend/
+RUN mkdir -p /app/storage_artifacts
 
-RUN pip install --no-cache-dir fastapi uvicorn[standard] pydantic pydantic-settings sqlalchemy greenlet aiosqlite grpcio grpcio-tools httpx aio-pika asyncpg psycopg2-binary
+RUN pip install --no-cache-dir fastapi uvicorn[standard] pydantic pydantic-settings sqlalchemy greenlet aiosqlite grpcio grpcio-tools httpx aio-pika asyncpg psycopg2-binary Pyro5
 
 
 
-EXPOSE 8000
+EXPOSE 8000 9090
 
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]

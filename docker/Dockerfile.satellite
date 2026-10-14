@@ -7,7 +7,7 @@ COPY satellites/ ./satellites/
 # FA-2: satellites implement the ILamportClock / IVectorClock interfaces reserved in FA-1
 COPY backend/fa2_extensions/ ./backend/fa2_extensions/
 
-RUN pip install --no-cache-dir fastapi uvicorn grpcio grpcio-tools httpx aio-pika
+RUN pip install --no-cache-dir fastapi uvicorn grpcio grpcio-tools httpx aio-pika Pyro5
 
 ENV SAT_ID=SAT-01
 ENV GRPC_PORT=5001

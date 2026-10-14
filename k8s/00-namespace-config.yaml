@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: orbital-mission
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orbit-config
+  namespace: orbital-mission
+data:
+  RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/"
+  REGISTRY_URL: "http://gateway"          # satellites reach Mission Control through the gateway
+  PYRO_NS_HOST: "mission-control"
+  DATABASE_URL: "sqlite+aiosqlite:////app/storage_artifacts/mission.db"

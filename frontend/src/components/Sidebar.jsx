@@ -18,6 +18,8 @@ import {
   Camera,
   Workflow,
   RadioTower,
+  HardDrive,
+  Cloud,
 } from 'lucide-react';
 
 const navItems = [
@@ -43,6 +45,12 @@ const fa2Items = [
   { path: '/snapshots', name: 'Global Snapshot', icon: Camera },
   { path: '/deadlock', name: 'Deadlock Detection', icon: Workflow },
   { path: '/blackout', name: 'Ground Blackout', icon: RadioTower }
+];
+
+// FA-2 (Unit 4): data, cloud and web layers
+const unit4Items = [
+  { path: '/orbitfs', name: 'OrbitFS', icon: HardDrive },
+  { path: '/unit4', name: 'Cloud & Data Lab', icon: Cloud }
 ];
 
 
@@ -77,6 +85,28 @@ export default function Sidebar() {
         <div className="px-3 pt-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Distributed algorithms</div>
         <nav className="space-y-1">
           {fa2Items.map((item) => {
+            const Icon = item.icon;
+            return (
+              <NavLink
+                key={item.path}
+                to={item.path}
+                className={({ isActive }) =>
+                  `flex items-center space-x-3 px-3.5 py-2 rounded-xl text-xs font-medium transition-all duration-150 ${
+                    isActive
+                      ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 glow-cyan font-semibold'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                  }`
+                }
+              >
+                <Icon className="w-4 h-4 shrink-0" />
+                <span>{item.name}</span>
+              </NavLink>
+            );
+          })}
+        </nav>
+        <div className="px-3 pt-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Cloud &amp; data</div>
+        <nav className="space-y-1">
+          {unit4Items.map((item) => {
             const Icon = item.icon;
             return (
               <NavLink

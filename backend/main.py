@@ -35,6 +35,9 @@ fault_simulator = FaultSimulator(global_registry)
 from backend.services.event_manager import generate_correlation_id, create_event
 from backend.fa2 import router as fa2
 from backend.fa2 import phase3 as fa2_phase3
+from backend.fa2 import orbitfs as fa2_orbitfs, mapreduce as fa2_mapreduce, serverless as fa2_serverless
+from backend.fa2 import objects as fa2_objects, role as fa2_role
+from backend.fa2.bus import mission_bus
 
 fa2.bind(fault_simulator=fault_simulator, broadcaster=websocket_manager)
 
@@ -129,6 +132,7 @@ async def lifespan(app: FastAPI):
 
         sat_data["health_score"] = score
         sat_data["status"] = reg.status
+        fa2_mapreduce.record_sample(sat_data)  # MapReduce input (archived to OrbitFS on demand)
         position = payload.get("data", {}).get("position")
         if isinstance(position, dict):
             sat_data["position"] = position
@@ -148,9 +152,18 @@ async def lifespan(app: FastAPI):
     
     sweeper_task = asyncio.create_task(heartbeat_sweeper_task())
     task_mirror = asyncio.create_task(fa2_phase3.task_mirror_loop())
+    # Unit 4 services
+    mission_bus.rabbit = rabbitmq_manager
+    await rabbitmq_manager.register_mission_listener(mission_bus.dispatch)
+    unit4_tasks = [asyncio.create_task(fa2_orbitfs.namenode.run()), asyncio.create_task(fa2_serverless.runtime.reap()),
+                   asyncio.create_task(fa2_role.monitor())]
+    fa2_objects.start_name_server()
     yield
     # Shutdown logic
     sweeper_task.cancel()
+    for t in unit4_tasks:
+        t.cancel()
+    fa2_serverless.runtime.shutdown()
     logger.info("Mission Control shutdown complete.")
 
 app = FastAPI(
@@ -160,6 +173,10 @@ app = FastAPI(
 
 app.include_router(fa2.router)
 app.include_router(fa2_phase3.router)
+app.include_router(fa2_orbitfs.router)
+app.include_router(fa2_mapreduce.router)
+app.include_router(fa2_serverless.router)
+app.include_router(fa2_objects.router)
 
 
 @app.middleware("http")
@@ -658,9 +675,6 @@ from backend.services.reallocation_engine import global_reallocation_engine
 from backend.services.resilience_engine import global_resilience_engine
 from backend.services.simulation_engine import global_simulation_engine
 from backend.services.incident_replay import global_incident_replay_engine
-from backend.services.distributed_storage import global_distributed_storage
-from backend.services.serverless_processor import global_serverless_processor
-from backend.services.hadoop_analytics import global_hadoop_analytics
 
 from backend.services.failure_intelligence import global_failure_intelligence
 from backend.services.predictive_health import global_predictive_health
@@ -858,18 +872,24 @@ async def get_incident(incident_id: str):
 
 @app.get("/api/unit4/storage")
 async def get_storage_artifacts(category: Optional[str] = Query(None)):
-    return {"artifacts": global_distributed_storage.list_artifacts(category), "timestamp": time.time()}
+    """Artifacts are files in OrbitFS (replicated on the satellites)."""
+    files = (await fa2_orbitfs.list_files(prefix=f"{category}/" if category else ""))["files"]
+    return {"artifacts": [{"artifact_id": f["path"], "category": f["path"].split("/")[0], "size_bytes": f["size"],
+                           "chunks": len(f["chunks"]), "under_replicated": f["under_replicated"]} for f in files],
+            "timestamp": time.time()}
 
 @app.post("/api/unit4/serverless")
 async def trigger_serverless_function(req: dict):
-    fn_name = req.get("function_name", "GENERATE_INCIDENT_REPORT")
-    payload = req.get("event_payload", {"origin": "MANUAL_TRIGGER"})
-    res = await global_serverless_processor.trigger_event_function(fn_name, payload)
-    return res
+    return await fa2_serverless.invoke({"function": req.get("function_name", "incident_report"),
+                                        "event": req.get("event_payload") or {}})
 
 @app.get("/api/unit4/hadoop")
-async def run_hadoop_job(job_name: str = Query("CONSTELLATION_HEALTH_TRENDS")):
-    return global_hadoop_analytics.run_mapreduce_job(job_name)
+async def run_hadoop_job(job_name: str = Query("health_stats")):
+    """Real MapReduce over the latest telemetry archive in OrbitFS (archived first if none exists)."""
+    job = {"CONSTELLATION_HEALTH_TRENDS": "health_stats"}.get(job_name, job_name)
+    if not any(p.startswith("telemetry/archive-") for p in fa2_orbitfs.namenode.files):
+        await fa2_mapreduce.archive()
+    return await fa2_mapreduce.run_job({"job": job})
 
 @app.get("/api/health")
 async def system_health():

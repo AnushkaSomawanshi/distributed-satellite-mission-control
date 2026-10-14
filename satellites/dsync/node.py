@@ -17,6 +17,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 from .beacon import BeaconService
 from .clocks import PhysicalClock
 from .clocksync import ClockSyncService
+from .datanode import DataNode
 from .deadlock import DeadlockService
 from .election import ElectionService
 from .events import EventReporter
@@ -54,6 +55,9 @@ class DsyncNode:
         self.tasks = TaskService(self)
         self.snapshots = SnapshotService(self)
         self.deadlock = DeadlockService(self)
+        self.datanode = DataNode(self)          # OrbitFS storage + MapReduce tasks (Unit 4)
+        self.pyro_uri: Optional[str] = None     # distributed object (Unit 4)
+        self.pyro_registered = False
         self.beacons.on_peer_dead += [self.election.on_peer_dead, self.mutex.on_peer_dead, self.tasks.on_peer_dead]
         self.election.listeners.append(self.tasks.on_leader_change)
         self.transport.on("CROSSLINK", self._on_crosslink)
@@ -181,6 +185,9 @@ class DsyncNode:
             "tasks": self.tasks.to_dict(),
             "deadlock": self.deadlock.to_dict(),
             "snapshots": [{"snapshot_id": p["snapshot_id"], "complete": p["complete"]} for p in self.snapshots.recent()],
+            "orbitfs": {"chunks": len(self.datanode.chunks), "used_bytes": self.datanode.used_bytes(),
+                        "stats": self.datanode.stats},
+            "pyro": {"uri": self.pyro_uri, "registered": self.pyro_registered},
             "ground": {"ok": self.ground_ok, "lost_at": self.ground_lost_at, "blackouts": self.blackouts[-5:],
                        "events_waiting_for_ground": len(self.reporter.pending)},
         }

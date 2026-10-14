@@ -1,0 +1,108 @@
+# Mission Control: primary (runs the Pyro5 name server) + warm standby. Both mount the same volume for
+# OrbitFS NameNode metadata so the standby can take over. ReadWriteOnce works when both pods run on one
+# node (kind / minikube); use a ReadWriteMany storage class on a multi-node cluster.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: orbitfs-meta
+  namespace: orbital-mission
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: {storage: 256Mi}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mission-control
+  namespace: orbital-mission
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: mission-control, role: primary}
+  template:
+    metadata:
+      labels: {app: mission-control, role: primary}
+    spec:
+      containers:
+        - name: mission-control
+          image: orbittrack-backend:latest
+          imagePullPolicy: IfNotPresent
+          envFrom: [{configMapRef: {name: orbit-config}}]
+          env:
+            - {name: MC_INSTANCE, value: primary}
+            - {name: PYRO_NAMESERVER, value: "1"}
+          ports:
+            - {containerPort: 8000, name: http}
+            - {containerPort: 9090, name: pyro-ns}
+          readinessProbe:
+            httpGet: {path: /api/health, port: 8000}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /api/gateway/whoami, port: 8000}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          volumeMounts: [{name: orbitfs-meta, mountPath: /app/storage_artifacts}]
+          resources:
+            requests: {cpu: 200m, memory: 256Mi}
+            limits: {cpu: "1", memory: 768Mi}
+      volumes:
+        - name: orbitfs-meta
+          persistentVolumeClaim: {claimName: orbitfs-meta}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mission-control
+  namespace: orbital-mission
+spec:
+  selector: {app: mission-control, role: primary}
+  ports:
+    - {name: http, port: 8000, targetPort: 8000}
+    - {name: pyro-ns, port: 9090, targetPort: 9090}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mission-control-standby
+  namespace: orbital-mission
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: mission-control, role: standby}
+  template:
+    metadata:
+      labels: {app: mission-control, role: standby}
+    spec:
+      containers:
+        - name: mission-control
+          image: orbittrack-backend:latest
+          imagePullPolicy: IfNotPresent
+          envFrom: [{configMapRef: {name: orbit-config}}]
+          env:
+            - {name: MC_INSTANCE, value: standby}
+            - {name: PRIMARY_URL, value: "http://mission-control:8000"}
+            - {name: PYRO_NAMESERVER, value: "0"}
+            - {name: DATABASE_URL, value: "sqlite+aiosqlite:////tmp/standby.db"}
+          ports: [{containerPort: 8000, name: http}]
+          readinessProbe:
+            httpGet: {path: /api/health, port: 8000}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts: [{name: orbitfs-meta, mountPath: /app/storage_artifacts}]
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: "1", memory: 768Mi}
+      volumes:
+        - name: orbitfs-meta
+          persistentVolumeClaim: {claimName: orbitfs-meta}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mission-control-standby
+  namespace: orbital-mission
+spec:
+  selector: {app: mission-control, role: standby}
+  ports: [{name: http, port: 8000, targetPort: 8000}]

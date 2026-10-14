@@ -1,4 +1,5 @@
 import json
+import os
 import asyncio
 import logging
 import time
@@ -19,6 +20,11 @@ class RabbitMQManager:
         self.listeners: List[Callable[[Dict[str, Any]], None]] = []
         self.event_listeners: List[Callable[[Dict[str, Any]], Any]] = []  # FA-2 algorithm events
         self.event_batches_consumed = 0
+        self.mission_listeners: List[Callable[[Dict[str, Any]], Any]] = []  # Unit 4 mission event bus
+        # Every Mission Control replica gets its OWN queues on the fanout exchanges, so a standby
+        # replica receives every message too instead of splitting the stream with the primary.
+        instance = os.getenv("MC_INSTANCE", "primary")
+        self.suffix = "" if instance == "primary" else f".{instance}"
         self.published_message_count = 0
         self.consumed_message_count = 0
         self.consumed_by_producer: Dict[str, int] = {}
@@ -34,13 +40,18 @@ class RabbitMQManager:
             
             # Declare telemetry & events exchanges/queues
             await self._channel.declare_exchange("telemetry.exchange", type="fanout")
-            queue = await self._channel.declare_queue("telemetry.queue", durable=True)
+            queue = await self._channel.declare_queue(f"telemetry.queue{self.suffix}", durable=True)
             await queue.bind("telemetry.exchange")
 
             # FA-2: satellites publish algorithm events (SEND/RECV/LOCAL) to their own fanout exchange
             await self._channel.declare_exchange("dsync.events", type="fanout")
-            events_queue = await self._channel.declare_queue("dsync.events.queue", durable=True)
+            events_queue = await self._channel.declare_queue(f"dsync.events.queue{self.suffix}", durable=True)
             await events_queue.bind("dsync.events")
+
+            # Unit 4: Mission Control's own events (FILE_UPLOADED, SNAPSHOT_COMPLETED) for the serverless runtime
+            await self._channel.declare_exchange("mission.events", type="fanout")
+            mission_queue = await self._channel.declare_queue(f"mission.events.queue{self.suffix}", durable=True)
+            await mission_queue.bind("mission.events")
 
             self.connected = True
             logger.info("Connected to RabbitMQ server successfully.")
@@ -48,6 +59,7 @@ class RabbitMQManager:
             # Start background consuming loop
             asyncio.create_task(self._start_consumer(queue))
             asyncio.create_task(self._start_event_consumer(events_queue))
+            asyncio.create_task(self._start_mission_consumer(mission_queue))
         except Exception as e:
             logger.warning(f"RabbitMQ server not reachable ({e}). Operating in resilient In-Memory Fallback Queue mode.")
             self.connected = False
@@ -90,6 +102,35 @@ class RabbitMQManager:
 
     async def register_event_listener(self, callback: Callable[[Dict[str, Any]], Any]):
         self.event_listeners.append(callback)
+
+    async def register_mission_listener(self, callback: Callable[[Dict[str, Any]], Any]):
+        self.mission_listeners.append(callback)
+
+    async def publish_mission_event(self, event: Dict[str, Any]) -> bool:
+        if not (self.connected and self._channel):
+            return False
+        try:
+            import aio_pika
+            exchange = await self._channel.get_exchange("mission.events")
+            await exchange.publish(aio_pika.Message(body=json.dumps(event, default=str).encode()), routing_key="")
+            return True
+        except Exception as ex:
+            logger.warning(f"[RABBITMQ MISSION EVENT] publish failed: {ex}")
+            return False
+
+    async def _start_mission_consumer(self, queue):
+        async with queue.iterator() as queue_iter:
+            async for message in queue_iter:
+                async with message.process():
+                    try:
+                        data = json.loads(message.body.decode())
+                    except (ValueError, UnicodeDecodeError):
+                        continue
+                    for cb in self.mission_listeners:
+                        try:
+                            await cb(data)
+                        except Exception as err:
+                            logger.error(f"[RABBITMQ MISSION EVENT] listener failed: {err}")
 
     async def _start_event_consumer(self, queue):
         async with queue.iterator() as queue_iter:

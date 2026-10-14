@@ -193,6 +193,8 @@ async def snapshot(body: Dict[str, Any] = Body(default={})):
     result["markers_sent"] = sum(1 for e in events if e.get("kind") == "SEND" and e.get("msg_type") == "SNAP_MARKER")
     snapshot_history.append(result)
     del snapshot_history[:-30]
+    from backend.fa2.bus import mission_bus
+    await mission_bus.publish("SNAPSHOT_COMPLETED", snapshot_id=snap_id, snapshot=result)
     try:  # archive in OrbitFS (Phase 4) when available
         from backend.fa2.orbitfs import archive_json
         result["archived_as"] = await archive_json(f"snapshots/{snap_id}.json", result)

@@ -29,6 +29,8 @@ except Exception:
 
 from satellites.telemetry_publisher import TelemetryPublisher
 from satellites.dsync import DsyncNode, create_dsync_router
+from satellites.dsync.datanode import create_datanode_router
+from satellites.dsync.remote_objects import start_pyro
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s")
 logger = logging.getLogger("SatelliteNode")
@@ -523,6 +525,8 @@ def create_satellite_p2p_app(node: SatelliteNode) -> FastAPI:
 
     # FA-2: satellite-to-satellite algorithm messages and Mission Control's control commands
     app.include_router(create_dsync_router(node.dsync, node.fetch_server_time))
+    # Unit 4: OrbitFS DataNode + MapReduce task tracker
+    app.include_router(create_datanode_router(node.dsync.datanode))
 
     @app.post("/p2p/send_to_peer")
     async def send_to_peer(req: dict):
@@ -635,6 +639,10 @@ async def run_satellite(sat_id: str, grpc_port: int, p2p_port: int, registry_url
 
     # Start FA-2 services: event shipping, beacons, leader watch
     node.dsync.start()
+
+    # Unit 4: export the payload as a Pyro5 remote object (port 7000 + satellite number by default)
+    pyro_port = int(os.getenv("PYRO_PORT", str(7000 + int(sat_id.split("-")[-1]))))
+    start_pyro(node.dsync, os.getenv("PYRO_HOST", node.address), pyro_port)
 
     # Start native async gRPC Server if available
     if HAS_GRPC:

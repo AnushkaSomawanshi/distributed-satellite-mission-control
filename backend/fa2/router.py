@@ -118,6 +118,12 @@ async def ingest(events: List[Dict[str, Any]], mode: str) -> int:
             leader = (e.get("detail") or {}).get("leader")
             if leader:
                 global_registry.current_leader = leader
+    # satellite events that serverless functions may react to (they arrived via RabbitMQ dsync.events)
+    from backend.fa2.bus import mission_bus
+    for e in fresh:
+        if e.get("kind") == "LOCAL" and e.get("label") in ("PEER_DEAD", "LEADER_ELECTED", "TASK_REASSIGNED", "DEADLOCK_DETECTED"):
+            await mission_bus.dispatch({"type": e["label"], "source": "satellite", "node": e["node"],
+                                        "detail": e.get("detail"), "at": e.get("true_ts")})
     visible = [e for e in fresh if e.get("algo") != "beacon" or e.get("kind") == "LOCAL"]
     if visible:
         await _broadcast({"event_type": "DSYNC_EVENTS", "events": visible, "timestamp": time.time()})

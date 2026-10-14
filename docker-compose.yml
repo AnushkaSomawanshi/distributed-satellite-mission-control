@@ -1,3 +1,26 @@
+# OrbitTrack: 5 satellites + Mission Control (primary + warm standby) behind an Nginx gateway.
+#   Dashboard via gateway:   http://localhost:8080      (recommended)
+#   Dashboard (Vite dev):    http://localhost:3000
+#   Mission Control API:     http://localhost:8000/docs  (primary, direct)
+#   RabbitMQ management:     http://localhost:15672      (guest / guest)
+
+x-mission-control: &mission-control
+  build:
+    context: .
+    dockerfile: docker/Dockerfile.backend
+  depends_on:
+    postgres:
+      condition: service_healthy
+    rabbitmq:
+      condition: service_healthy
+  volumes:
+    - orbitfs-meta:/app/storage_artifacts   # OrbitFS NameNode metadata, shared so the standby can take over
+
+x-satellite-env: &satellite-env
+  REGISTRY_URL: http://gateway              # satellites reach Mission Control through the gateway (failover)
+  RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+  PYRO_NS_HOST: mission-control              # Pyro5 name server for distributed objects
+
 services:
   postgres:
     image: postgres:15-alpine
@@ -27,115 +50,104 @@ services:
       retries: 5
 
   mission-control:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.backend
+    <<: *mission-control
     container_name: mission-control-backend
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgrespassword@postgres:5432/satellite_db
-      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+      DATABASE_URL: postgresql+asyncpg://postgres:postgrespassword@postgres:5432/satellite_db
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      MC_INSTANCE: primary
+      PYRO_NAMESERVER: "1"
+
+  mission-control-standby:
+    <<: *mission-control
+    container_name: mission-control-standby
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgrespassword@postgres:5432/satellite_db
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      MC_INSTANCE: standby
+      PRIMARY_URL: http://mission-control:8000
+      PYRO_NAMESERVER: "0"
+      PYRO_NS_HOST: mission-control
+
+  gateway:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.gateway
+    container_name: orbit-gateway
+    ports:
+      - "8080:80"
     depends_on:
-      postgres:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
+      - mission-control
+      - mission-control-standby
 
   satellite-01:
-    build:
+    build: &satellite-build
       context: .
       dockerfile: docker/Dockerfile.satellite
     container_name: satellite-01
     environment:
-      - SAT_ID=SAT-01
-      - SAT_ADDRESS=satellite-01
-      - GRPC_PORT=5001
-      - P2P_PORT=6001
-      - REGISTRY_URL=http://mission-control:8000
-      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
-    ports:
-      - "5001:5001"
-      - "6001:6001"
-    depends_on:
-      - mission-control
-      - rabbitmq
+      <<: *satellite-env
+      SAT_ID: SAT-01
+      SAT_ADDRESS: satellite-01
+      PYRO_HOST: satellite-01
+      GRPC_PORT: "5001"
+      P2P_PORT: "6001"
+    ports: ["5001:5001", "6001:6001"]
+    depends_on: [gateway, rabbitmq]
 
   satellite-02:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.satellite
+    build: *satellite-build
     container_name: satellite-02
     environment:
-      - SAT_ID=SAT-02
-      - SAT_ADDRESS=satellite-02
-      - GRPC_PORT=5002
-      - P2P_PORT=6002
-      - REGISTRY_URL=http://mission-control:8000
-      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
-    ports:
-      - "5002:5002"
-      - "6002:6002"
-    depends_on:
-      - mission-control
-      - rabbitmq
+      <<: *satellite-env
+      SAT_ID: SAT-02
+      SAT_ADDRESS: satellite-02
+      PYRO_HOST: satellite-02
+      GRPC_PORT: "5002"
+      P2P_PORT: "6002"
+    ports: ["5002:5002", "6002:6002"]
+    depends_on: [gateway, rabbitmq]
 
   satellite-03:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.satellite
+    build: *satellite-build
     container_name: satellite-03
     environment:
-      - SAT_ID=SAT-03
-      - SAT_ADDRESS=satellite-03
-      - GRPC_PORT=5003
-      - P2P_PORT=6003
-      - REGISTRY_URL=http://mission-control:8000
-      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
-    ports:
-      - "5003:5003"
-      - "6003:6003"
-    depends_on:
-      - mission-control
-      - rabbitmq
+      <<: *satellite-env
+      SAT_ID: SAT-03
+      SAT_ADDRESS: satellite-03
+      PYRO_HOST: satellite-03
+      GRPC_PORT: "5003"
+      P2P_PORT: "6003"
+    ports: ["5003:5003", "6003:6003"]
+    depends_on: [gateway, rabbitmq]
 
   satellite-04:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.satellite
+    build: *satellite-build
     container_name: satellite-04
     environment:
-      - SAT_ID=SAT-04
-      - SAT_ADDRESS=satellite-04
-      - GRPC_PORT=5004
-      - P2P_PORT=6004
-      - REGISTRY_URL=http://mission-control:8000
-      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
-    ports:
-      - "5004:5004"
-      - "6004:6004"
-    depends_on:
-      - mission-control
-      - rabbitmq
+      <<: *satellite-env
+      SAT_ID: SAT-04
+      SAT_ADDRESS: satellite-04
+      PYRO_HOST: satellite-04
+      GRPC_PORT: "5004"
+      P2P_PORT: "6004"
+    ports: ["5004:5004", "6004:6004"]
+    depends_on: [gateway, rabbitmq]
 
   satellite-05:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.satellite
+    build: *satellite-build
     container_name: satellite-05
     environment:
-      - SAT_ID=SAT-05
-      - SAT_ADDRESS=satellite-05
-      - GRPC_PORT=5005
-      - P2P_PORT=6005
-      - REGISTRY_URL=http://mission-control:8000
-      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
-    ports:
-      - "5005:5005"
-      - "6005:6005"
-    depends_on:
-      - mission-control
-      - rabbitmq
+      <<: *satellite-env
+      SAT_ID: SAT-05
+      SAT_ADDRESS: satellite-05
+      PYRO_HOST: satellite-05
+      GRPC_PORT: "5005"
+      P2P_PORT: "6005"
+    ports: ["5005:5005", "6005:6005"]
+    depends_on: [gateway, rabbitmq]
 
   frontend:
     build:
@@ -144,7 +156,8 @@ services:
     container_name: mission-control-frontend
     ports:
       - "3000:3000"
-    environment:
-      - VITE_BACKEND_TARGET=http://mission-control:8000
     depends_on:
       - mission-control
+
+volumes:
+  orbitfs-meta:

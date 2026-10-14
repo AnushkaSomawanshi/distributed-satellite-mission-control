@@ -1,0 +1,65 @@
+# The five satellites as a StatefulSet: stable pod names satellite-0..4 map to SAT-01..SAT-05 and keep
+# their identity across restarts; the headless service gives each pod a stable DNS name
+# (satellite-2.satellite.orbital-mission.svc.cluster.local) that the satellites register and use for P2P.
+apiVersion: v1
+kind: Service
+metadata:
+  name: satellite
+  namespace: orbital-mission
+spec:
+  clusterIP: None
+  selector: {app: satellite}
+  ports:
+    - {name: grpc, port: 5000}
+    - {name: p2p, port: 6000}
+    - {name: pyro, port: 7000}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: satellite
+  namespace: orbital-mission
+spec:
+  serviceName: satellite
+  replicas: 5
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels: {app: satellite}
+  template:
+    metadata:
+      labels: {app: satellite}
+    spec:
+      terminationGracePeriodSeconds: 5
+      containers:
+        - name: satellite
+          image: orbittrack-satellite:latest
+          imagePullPolicy: IfNotPresent
+          envFrom: [{configMapRef: {name: orbit-config}}]
+          env:
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - {name: PYRO_PORT, value: "7000"}
+          command: ["sh", "-c"]
+          args:
+            - >-
+              ORD=${POD_NAME##*-};
+              export SAT_ID=$(printf 'SAT-%02d' $((ORD + 1)));
+              export SAT_ADDRESS=$POD_NAME.satellite.orbital-mission.svc.cluster.local;
+              export PYRO_HOST=$SAT_ADDRESS;
+              exec python satellites/satellite_node.py --id $SAT_ID --grpc-port 5000 --p2p-port 6000 --registry $REGISTRY_URL
+          ports:
+            - {containerPort: 5000, name: grpc}
+            - {containerPort: 6000, name: p2p}
+            - {containerPort: 7000, name: pyro}
+          readinessProbe:
+            httpGet: {path: /dsync/state, port: 6000}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /p2p/state, port: 6000}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests: {cpu: 50m, memory: 96Mi}
+            limits: {cpu: 500m, memory: 256Mi}

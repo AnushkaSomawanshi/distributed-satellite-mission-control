@@ -1,0 +1,37 @@
+# Nginx gateway; its config (docker/gateway/nginx.conf) is baked into the orbittrack-gateway image and
+# uses the same service names (mission-control, mission-control-standby) as Docker Compose.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: orbital-mission
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: gateway}
+  template:
+    metadata:
+      labels: {app: gateway}
+    spec:
+      containers:
+        - name: nginx
+          image: orbittrack-gateway:latest
+          imagePullPolicy: IfNotPresent
+          ports: [{containerPort: 80, name: http}]
+          readinessProbe:
+            httpGet: {path: /, port: 80}
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 128Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  namespace: orbital-mission
+spec:
+  type: NodePort
+  selector: {app: gateway}
+  ports:
+    - {name: http, port: 80, targetPort: 80, nodePort: 30080}
