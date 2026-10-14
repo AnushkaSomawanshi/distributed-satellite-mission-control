@@ -6,12 +6,16 @@ and both ends record an event (SEND / RECV). Faults are enforced HERE, on the sa
 - partition: a satellite refuses to send to, or accept from, satellites outside its group;
 - crash (silent mode): the satellite neither sends nor accepts anything.
 
+Channels are FIFO: tracked messages to the same peer are sent one at a time, in order (each waits
+for the previous one's delivery). Chandy-Lamport snapshots rely on this.
+
 Two delivery styles:
 - send(): one-way message; the receiver's handler result is ignored.
 - request(): the receiver's handler returns a reply payload, which travels back as a stamped
   REPLY message (its own SEND/RECV events), in the HTTP response.
 """
 
+import asyncio
 import itertools
 import logging
 import time
@@ -74,6 +78,11 @@ class PeerDirectory:
         entry["last_beacon"] = self._clock()
         entry["state"] = "ALIVE"
         return previous
+
+    def forget_liveness(self) -> None:
+        for entry in self.entries.values():
+            entry["last_beacon"] = None
+            entry["state"] = "UNKNOWN"
 
     def silence(self, peer_id: str) -> Optional[float]:
         entry = self.entries.get(peer_id)
@@ -144,6 +153,8 @@ class Transport:
         self.sent: Dict[str, int] = {}
         self.received: Dict[str, int] = {}
         self.failed: Dict[str, int] = {}
+        self._links: Dict[str, asyncio.Lock] = {}          # one FIFO channel per destination
+        self.receive_listeners: List[Callable[[Dict[str, Any]], None]] = []
 
     # ---------------------------------------------------------------- helpers
     def on(self, msg_type: str, handler: Handler) -> None:
@@ -204,7 +215,16 @@ class Transport:
     # ---------------------------------------------------------------- sending
     async def send(self, dest: str, msg_type: str, payload: Optional[Dict[str, Any]] = None, *,
                    algo: Optional[str] = None, run_id: Optional[str] = None, expect_reply: bool = False,
-                   timeout: float = 2.0, tracked: bool = True) -> Optional[Dict[str, Any]]:
+                   timeout: float = 2.0, tracked: bool = True, link_delay: float = 0.0) -> Optional[Dict[str, Any]]:
+        if not tracked:
+            return await self._send(dest, msg_type, payload, algo, run_id, expect_reply, timeout, tracked, link_delay)
+        lock = self._links.setdefault(dest, asyncio.Lock())
+        async with lock:  # FIFO per channel: stamp, (propagate), deliver - in order
+            return await self._send(dest, msg_type, payload, algo, run_id, expect_reply, timeout, tracked, link_delay)
+
+    async def _send(self, dest: str, msg_type: str, payload: Optional[Dict[str, Any]], algo: Optional[str],
+                    run_id: Optional[str], expect_reply: bool, timeout: float, tracked: bool,
+                    link_delay: float) -> Optional[Dict[str, Any]]:
         if self.silent:
             raise PeerUnreachable(f"{self.node_id} is silent (simulated crash)")
         peer = self.directory.get(dest)
@@ -225,6 +245,8 @@ class Transport:
             self._bump(self.failed, msg_type)
             record_send(False, "partitioned")
             raise PeerUnreachable(f"{dest} is on the other side of a network partition")
+        if link_delay > 0:
+            await asyncio.sleep(link_delay)  # the message is "in the channel" during this time
         try:
             resp = await self.network.post(peer["address"], peer["p2p_port"], "/dsync/msg", env, timeout)
         except Exception as exc:
@@ -254,6 +276,8 @@ class Transport:
         if env.get("src") in self.blocked:
             return {"ok": False, "reason": "partitioned"}
         self._absorb(env)
+        for listener in self.receive_listeners:
+            listener(env)
         handler = self.handlers.get(env["msg_type"])
         if handler is None:
             return {"ok": True, "unhandled": True}

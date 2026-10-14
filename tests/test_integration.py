@@ -35,8 +35,14 @@ async def test_end_to_end_coordinator_failure_and_task_recovery(monkeypatch):
         assert "SAT-05" in exclude
         return {"leader": "SAT-04", "term": 2, "agreed_by": ["SAT-01", "SAT-02", "SAT-03", "SAT-04"]}
 
+    async def fake_reassignment(target, since, timeout=20.0):
+        return {"failed_node": target, "tasks_reassigned_count": 1, "decided_by": "leader satellite",
+                "reallocation_results": [{"task_id": "T-050", "previous_owner": target, "new_owner": "SAT-01"}]}
+
+    import backend.services.simulation_engine as sim
     monkeypatch.setattr(fa2, "push_fault", fake_push)
     monkeypatch.setattr(fa2, "_wait_agreement", fake_agreement)
+    monkeypatch.setattr(sim, "_wait_for_reassignment", fake_reassignment)
 
     # Seed satellites
     for i in range(1, 6):
@@ -54,5 +60,5 @@ async def test_end_to_end_coordinator_failure_and_task_recovery(monkeypatch):
     assert ("CRASH", ["SAT-05"]) in crashed
     assert res["election_result"]["new_leader"] == "SAT-04"
     assert res["election_result"]["decided_by"].startswith("satellites")
-    assert res["task_reallocation_result"]["tasks_reassigned_count"] >= 0
+    assert res["task_reallocation_result"]["decided_by"] == "leader satellite"
 

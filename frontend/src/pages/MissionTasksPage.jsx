@@ -1,187 +1,108 @@
-import React, { useState, useEffect } from 'react';
-import { Target, Cpu, CheckCircle, ShieldAlert, ArrowRight, RefreshCw, Clock } from 'lucide-react';
+import React, { useState } from 'react';
+import { Target, Cpu, Shuffle, ArrowRight } from 'lucide-react';
+import { SATS, api, usePoll, useAction, PageHeader, Panel, Btn, Select, ErrorNote, Stat } from '../lib/fa2';
+
+const statusTone = {
+  RUNNING: 'text-emerald-300',
+  OWNER_SILENT: 'text-amber-300',
+  IN_TRANSIT_OR_UNASSIGNED: 'text-sky-300',
+  DUPLICATE_PENDING_FENCING: 'text-rose-300',
+};
 
 export default function MissionTasksPage() {
-  const [tasks, setTasks] = useState([]);
-  const [capabilitiesMap, setCapabilitiesMap] = useState({});
-  const [loading, setLoading] = useState(false);
-  const [selectedTask, setSelectedTask] = useState(null);
-  const [reassignNode, setReassignNode] = useState('SAT-01');
+  const [data, , reload] = usePoll('/api/fa2/tasks', 2000);
+  const [target, setTarget] = useState({});
+  const { busy, error, run } = useAction();
+  const tasks = data?.tasks || [];
+  const caps = data?.capabilities_map || {};
 
-  const fetchTasks = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch('/api/tasks');
-      const data = await res.json();
-      setTasks(data.tasks || []);
-      setCapabilitiesMap(data.capabilities_map || {});
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchTasks();
-  }, []);
-
-  const handleReassign = async (taskId) => {
-    try {
-      const res = await fetch(`/api/tasks/${taskId}/reassign`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ new_owner: reassignNode, reason: 'OPERATOR_MANUAL_REASSIGNMENT' })
-      });
-      if (res.ok) {
-        fetchTasks();
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  };
+  const assign = (taskId) => run(`assign-${taskId}`, async () => {
+    await api(`/api/tasks/${taskId}/reassign`, { method: 'POST', body: { new_owner: target[taskId] || 'SAT-01' } });
+    reload();
+  });
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-bold font-orbitron text-slate-100 flex items-center space-x-2">
-            <Target className="w-5 h-5 text-cyan-400" />
-            <span>Mission Tasks & Capability Allocation</span>
-          </h2>
-          <p className="text-xs text-slate-400 mt-1">
-            First-class mission tasks mapped to satellite capability constraints and vector clock versioning.
-          </p>
-        </div>
-        <button
-          onClick={fetchTasks}
-          disabled={loading}
-          className="px-3.5 py-2 bg-slate-900 border border-slate-800 hover:border-cyan-500/40 text-slate-200 rounded-xl text-xs font-semibold flex items-center space-x-2 transition-all"
-        >
-          <RefreshCw className={`w-4 h-4 text-cyan-400 ${loading ? 'animate-spin' : ''}`} />
-          <span>Refresh Tasks</span>
-        </button>
+      <PageHeader
+        icon={Target}
+        title="Mission Tasks"
+        subtitle="Tasks are owned by the satellites. When an owner is declared dead, the elected leader moves its tasks to the best capable satellite (version + 1); a satellite that returns with an old copy is told to drop it."
+      >
+        <Btn tone={data?.traffic ? 'danger' : 'ghost'} busy={busy === 'traffic'}
+          onClick={() => run('traffic', () => api('/api/fa2/tasks/traffic', { method: 'POST', body: { enabled: !data?.traffic } }))}>
+          <span className="inline-flex items-center gap-1"><Shuffle className="w-3.5 h-3.5" />{data?.traffic ? 'Stop handoff traffic' : 'Start handoff traffic'}</span>
+        </Btn>
+      </PageHeader>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Stat label="Leader (decides reassignment)" value={data?.leader || '—'} />
+        <Stat label="Tasks running" value={tasks.filter((t) => t.status === 'RUNNING').length} hint={`of ${tasks.length}`} />
+        <Stat label="Handoff traffic" value={data?.traffic ? 'ON' : 'OFF'} hint="tasks follow the satellites' footprints" />
+        <Stat label="Source" value={data?.source || '—'} />
       </div>
 
-      {/* Satellite Capabilities Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-        {Object.entries(capabilitiesMap).map(([satId, caps]) => (
-          <div key={satId} className="glass-panel p-4 rounded-xl border border-slate-800/80 space-y-2">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+        {SATS.map((s) => (
+          <div key={s} className="glass-panel p-3 rounded-xl border border-slate-800/80 space-y-2">
             <div className="flex items-center justify-between">
-              <span className="font-orbitron font-bold text-cyan-300 text-sm">{satId}</span>
+              <span className="font-orbitron font-bold text-cyan-300 text-sm">{s}</span>
               <Cpu className="w-4 h-4 text-slate-500" />
             </div>
             <div className="flex flex-wrap gap-1">
-              {caps.map((cap) => (
-                <span key={cap} className="px-2 py-0.5 bg-slate-900 text-slate-300 border border-slate-700/60 rounded text-[10px] font-mono font-semibold">
-                  {cap}
-                </span>
-              ))}
+              {(caps[s] || []).map((c) => <span key={c} className="px-2 py-0.5 bg-slate-900 text-slate-300 border border-slate-700/60 rounded text-[10px] font-mono">{c}</span>)}
+            </div>
+            <div className="text-[11px] text-slate-400 font-mono">
+              owns {tasks.filter((t) => t.current_owner === s).map((t) => t.task_id).join(', ') || 'nothing'}
             </div>
           </div>
         ))}
       </div>
 
-      {/* Mission Tasks Table */}
-      <div className="glass-panel rounded-xl border border-slate-800/80 overflow-hidden">
-        <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between">
-          <span className="font-orbitron font-semibold text-slate-200 text-sm">Active Constellation Mission Tasks</span>
-          <span className="text-xs font-mono text-cyan-400">{tasks.length} Managed Tasks</span>
-        </div>
+      <Panel title="Tasks">
+        <ErrorNote error={error} />
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse text-xs">
-            <thead>
-              <tr className="border-b border-slate-800 bg-slate-900/50 text-slate-400 font-mono">
-                <th className="p-3.5">Task ID</th>
-                <th className="p-3.5">Mission</th>
-                <th className="p-3.5">Priority</th>
-                <th className="p-3.5">Required Capabilities</th>
-                <th className="p-3.5">Current Owner</th>
-                <th className="p-3.5">Status</th>
-                <th className="p-3.5">Lamport T</th>
-                <th className="p-3.5 text-right">Actions</th>
-              </tr>
+          <table className="w-full text-xs">
+            <thead className="text-slate-500 text-left">
+              <tr><th className="py-1 pr-3">Task</th><th className="pr-3">Type</th><th className="pr-3">Priority</th><th className="pr-3">Needs</th><th className="pr-3">Owner</th><th className="pr-3">Version</th><th className="pr-3">Status</th><th>Move to (via leader)</th></tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/60">
-              {tasks.map((task) => (
-                <tr key={task.task_id} className="hover:bg-slate-900/40 transition-colors">
-                  <td className="p-3.5 font-mono font-bold text-cyan-300">{task.task_id}</td>
-                  <td className="p-3.5 text-slate-300">{task.mission_id}</td>
-                  <td className="p-3.5">
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${task.priority === 'HIGH' ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40' : 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'}`}>
-                      {task.priority}
-                    </span>
-                  </td>
-                  <td className="p-3.5 font-mono">
-                    <div className="flex flex-wrap gap-1">
-                      {task.required_capabilities.map((c) => (
-                        <span key={c} className="px-1.5 py-0.5 bg-slate-900 text-slate-300 border border-slate-800 rounded text-[10px]">
-                          {c}
-                        </span>
-                      ))}
+            <tbody className="text-slate-200">
+              {tasks.map((t) => (
+                <tr key={t.task_id} className="border-t border-slate-800 align-top">
+                  <td className="py-2 pr-3 font-mono text-cyan-300">{t.task_id}</td>
+                  <td className="pr-3">{t.task_type}<div className="text-[10px] text-slate-500 max-w-xs">{t.description}</div></td>
+                  <td className="pr-3">{t.priority}</td>
+                  <td className="pr-3 font-mono text-[10px]">{(t.required_capabilities || []).join(' + ')}</td>
+                  <td className="pr-3 font-mono">{t.current_owner || '—'}</td>
+                  <td className="pr-3 font-mono">v{t.version ?? '—'}</td>
+                  <td className={`pr-3 font-mono text-[11px] ${statusTone[t.status] || ''}`}>{t.status}</td>
+                  <td>
+                    <div className="flex items-center gap-2">
+                      <Select value={target[t.task_id] || 'SAT-01'} onChange={(v) => setTarget({ ...target, [t.task_id]: v })} options={SATS} />
+                      <Btn tone="ghost" busy={busy === `assign-${t.task_id}`} onClick={() => assign(t.task_id)}>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </Btn>
                     </div>
-                  </td>
-                  <td className="p-3.5 font-mono font-bold text-slate-200">
-                    {task.current_owner}
-                    {task.previous_owner && <span className="text-[10px] text-slate-500 block">was {task.previous_owner}</span>}
-                  </td>
-                  <td className="p-3.5">
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${task.status === 'RUNNING' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'}`}>
-                      {task.status}
-                    </span>
-                  </td>
-                  <td className="p-3.5 font-mono text-cyan-400">T={task.lamport_timestamp}</td>
-                  <td className="p-3.5 text-right space-x-2">
-                    <button
-                      onClick={() => setSelectedTask(task)}
-                      className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-[11px] font-medium"
-                    >
-                      Inspect
-                    </button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      </div>
+        <p className="text-[11px] text-slate-500">The leader rejects a move to a satellite without the required capabilities.</p>
+      </Panel>
 
-      {/* Task Reassignment Controls */}
-      {selectedTask && (
-        <div className="glass-panel p-5 rounded-xl border border-cyan-500/40 space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <h3 className="font-orbitron font-bold text-cyan-300 text-sm">
-              Manual Task Transfer: {selectedTask.task_id}
-            </h3>
-            <button onClick={() => setSelectedTask(null)} className="text-xs text-slate-400 hover:text-slate-200">Close</button>
-          </div>
-          <p className="text-xs text-slate-300">{selectedTask.description}</p>
-          <div className="flex items-center space-x-4 text-xs font-mono">
-            <div>
-              <span className="text-slate-400">Current Owner:</span>{' '}
-              <span className="font-bold text-slate-200">{selectedTask.current_owner}</span>
-            </div>
-            <div>
-              <span className="text-slate-400">Transfer To:</span>{' '}
-              <select
-                value={reassignNode}
-                onChange={(e) => setReassignNode(e.target.value)}
-                className="bg-slate-900 border border-slate-700 text-slate-200 rounded px-2 py-1 ml-2 font-mono"
-              >
-                {['SAT-01', 'SAT-02', 'SAT-03', 'SAT-04', 'SAT-05'].map((s) => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
-              </select>
-            </div>
-            <button
-              onClick={() => handleReassign(selectedTask.task_id)}
-              className="px-4 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold rounded-lg transition-all"
-            >
-              Transfer Ownership
-            </button>
-          </div>
-        </div>
-      )}
+      <Panel title="Recent automatic reassignments (decided by the leader)">
+        {(data?.recent_reassignments || []).length === 0 ? <div className="text-xs text-slate-400">None yet. Crash a task owner on the Leader Election page to see one.</div> : (
+          <table className="w-full text-xs font-mono">
+            <thead className="text-slate-500 text-left"><tr><th className="py-1 pr-3">Task</th><th className="pr-3">From</th><th className="pr-3">To</th><th className="pr-3">Version</th><th>Reason</th></tr></thead>
+            <tbody className="text-slate-200">
+              {data.recent_reassignments.slice().reverse().map((r, i) => (
+                <tr key={i} className="border-t border-slate-800"><td className="py-1.5 pr-3">{r.task_id}</td><td className="pr-3">{r.from}</td><td className="pr-3">{r.to}</td><td className="pr-3">v{r.version}</td><td>{r.reason}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Panel>
     </div>
   );
 }

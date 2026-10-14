@@ -40,6 +40,9 @@ class BeaconService:
             "address": info["address"],
             "p2p_port": info["p2p_port"],
             "health": info["health"],
+            "battery": info.get("battery"),
+            "signal": info.get("signal"),
+            "tasks": self.node.tasks.summary(),
             "priority": self.node.election.priority(),
             "leader": self.node.election.leader,
             "term": self.node.election.term,
@@ -82,7 +85,7 @@ class BeaconService:
             offset_ms = round((p["clock_reading"] - self.node.physical.now()) * 1000.0, 3)
         previous = self.node.directory.mark_beacon(
             src, address=p.get("address"), p2p_port=p.get("p2p_port"),
-            health=p.get("health"), priority=p.get("priority"),
+            health=p.get("health"), priority=p.get("priority"), battery=p.get("battery"), signal=p.get("signal"),
             leader=p.get("leader"), term=p.get("term"),
             clock_offset_ms=offset_ms, position=p.get("position"),
         )
@@ -92,6 +95,7 @@ class BeaconService:
             for cb in self.on_peer_recovered:
                 asyncio.create_task(cb(src))
         await self.node.election.observe_beacon(src, p)
+        self.node.tasks.observe_beacon(src, p)
         return None
 
     async def run(self) -> None:

@@ -92,8 +92,9 @@ class FailureSimulator:
             if agreement:
                 global_registry.current_leader = agreement["leader"]
 
-        # 3. Execute Autonomous Task Reallocation
-        reallocation_res = await global_reallocation_engine.execute_reallocation_for_failed_node(target_node)
+        # 3. Task reallocation is decided by the leader satellite when its beacons declare the target
+        #    dead; Mission Control waits for the satellites to report the new owners.
+        reallocation_res = await _wait_for_reassignment(target_node, start_t)
 
         # 4. Calculate final resilience metrics
         resilience = global_resilience_engine.calculate_resilience_metrics()
@@ -110,5 +111,25 @@ class FailureSimulator:
             "total_execution_duration_ms": duration_ms,
             "timestamp": start_t
         }
+
+async def _wait_for_reassignment(target_node: str, since: float, timeout: float = 20.0) -> Dict[str, Any]:
+    from backend.fa2.event_store import event_store
+    from backend.fa2_extensions.catalog import MISSION_TASKS
+    end = time.time() + timeout
+    moved: Dict[str, Any] = {}
+    while time.time() < end:
+        for e in event_store.query(since=since, limit=5000):
+            d = e.get("detail") or {}
+            if e.get("label") == "TASK_REASSIGNED" and d.get("from") == target_node:
+                moved[d["task_id"]] = d
+        owned_before = [t for t in global_task_manager.list_tasks() if t.get("current_owner") == target_node]
+        if moved and len(moved) >= len(owned_before):
+            break
+        await asyncio.sleep(0.5)
+    results = [{"task_id": k, "previous_owner": target_node, "new_owner": v.get("to"),
+                "winning_score": v.get("winning_score"), "status": "REASSIGNED_SUCCESS"} for k, v in moved.items()]
+    return {"failed_node": target_node, "tasks_reassigned_count": len(results), "reallocation_results": results,
+            "decided_by": "leader satellite", "duration_ms": round((time.time() - since) * 1000, 2)}
+
 
 global_simulation_engine = FailureSimulator()

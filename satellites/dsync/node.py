@@ -17,9 +17,12 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 from .beacon import BeaconService
 from .clocks import PhysicalClock
 from .clocksync import ClockSyncService
+from .deadlock import DeadlockService
 from .election import ElectionService
 from .events import EventReporter
 from .mutex import ALGORITHMS as MUTEX_ALGORITHMS, MutexError, MutexService
+from .snapshot import SnapshotService
+from .tasks import TaskService
 from .transport import HttpNetwork, PeerDirectory, PeerUnreachable, Transport
 
 logger = logging.getLogger("dsync.node")
@@ -27,6 +30,7 @@ logger = logging.getLogger("dsync.node")
 ALL_SATELLITES = ["SAT-01", "SAT-02", "SAT-03", "SAT-04", "SAT-05"]
 LEADER_CHECK_INTERVAL = 3.0
 STARTUP_GRACE = 6.0
+BLACKOUT_BERKELEY_EVERY = 15.0   # leader keeps the clocks together while there is no ground time server
 
 
 class DsyncNode:
@@ -47,15 +51,24 @@ class DsyncNode:
         self.beacons = BeaconService(self, interval=beacon_interval)
         self.clocksync = ClockSyncService(self)
         self.mutex = MutexService(self)
-        self.beacons.on_peer_dead += [self.election.on_peer_dead, self.mutex.on_peer_dead]
+        self.tasks = TaskService(self)
+        self.snapshots = SnapshotService(self)
+        self.deadlock = DeadlockService(self)
+        self.beacons.on_peer_dead += [self.election.on_peer_dead, self.mutex.on_peer_dead, self.tasks.on_peer_dead]
+        self.election.listeners.append(self.tasks.on_leader_change)
         self.transport.on("CROSSLINK", self._on_crosslink)
+        # Ground Blackout Mode: True while Mission Control (the ground segment) is reachable
+        self.ground_ok = True
+        self.ground_lost_at: Optional[float] = None
+        self.blackouts: List[Dict[str, Any]] = []
         self._tasks: List[asyncio.Task] = []
 
     # ------------------------------------------------------------ lifecycle
     def start(self) -> None:
         loop = asyncio.get_running_loop()
         self._tasks = [loop.create_task(self.reporter.run()), loop.create_task(self.beacons.run()),
-                       loop.create_task(self._leader_watch())]
+                       loop.create_task(self._leader_watch()), loop.create_task(self.tasks.run()),
+                       loop.create_task(self._blackout_autonomy())]
 
     async def stop(self) -> None:
         for t in self._tasks:
@@ -71,6 +84,38 @@ class DsyncNode:
             except Exception as exc:  # pragma: no cover
                 logger.warning("leader watch error: %s", exc)
             await asyncio.sleep(LEADER_CHECK_INTERVAL)
+
+    # ------------------------------------------------------------ ground blackout
+    def set_ground(self, ok: bool) -> None:
+        """Called by the satellite process when Mission Control becomes unreachable / reachable again."""
+        if ok == self.ground_ok:
+            return
+        self.ground_ok = ok
+        if not ok:
+            self.ground_lost_at = time.time()
+            self.transport.local_event("GROUND_LOST", algo="blackout",
+                                       detail={"leader": self.election.leader, "mode": "AUTONOMOUS"})
+            logger.warning("[%s BLACKOUT] ground segment unreachable - continuing autonomously", self.node_id)
+        else:
+            record = {"lost_at": self.ground_lost_at, "restored_at": time.time(),
+                      "duration_s": round(time.time() - (self.ground_lost_at or time.time()), 1),
+                      "events_buffered": len(self.reporter.pending)}
+            self.blackouts.append(record)
+            self.transport.local_event("GROUND_RESTORED", algo="blackout", detail=record)
+            logger.warning("[%s BLACKOUT] ground restored after %ss", self.node_id, record["duration_s"])
+
+    async def _blackout_autonomy(self) -> None:
+        """Without the ground time server, the leader keeps the satellites' clocks together (Berkeley)."""
+        while True:
+            await asyncio.sleep(BLACKOUT_BERKELEY_EVERY)
+            try:
+                if (not self.ground_ok and not self.transport.silent
+                        and self.election.leader == self.node_id and self.directory.live_ids()):
+                    await self.clocksync.berkeley(f"blackout-berkeley-{int(time.time())}")
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:  # pragma: no cover
+                logger.warning("blackout autonomy error: %s", exc)
 
     # ------------------------------------------------------------ faults (enforced here)
     def apply_fault(self, fault: str, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -95,6 +140,9 @@ class DsyncNode:
         elif fault == "RECOVER":
             was_silent, t.silent = t.silent, False
             if was_silent:
+                # While silent we heard nobody; that silence says nothing about the peers. Forget the old
+                # liveness view and wait for fresh beacons, otherwise every peer would look DEAD at once.
+                self.directory.forget_liveness()
                 asyncio.ensure_future(self._after_recovery())
         else:
             raise ValueError(f"unknown fault {fault}")
@@ -130,6 +178,11 @@ class DsyncNode:
             "transport": self.transport.stats(),
             "events": self.reporter.stats(),
             "clock_sync_history": self.clocksync.history[-5:],
+            "tasks": self.tasks.to_dict(),
+            "deadlock": self.deadlock.to_dict(),
+            "snapshots": [{"snapshot_id": p["snapshot_id"], "complete": p["complete"]} for p in self.snapshots.recent()],
+            "ground": {"ok": self.ground_ok, "lost_at": self.ground_lost_at, "blackouts": self.blackouts[-5:],
+                       "events_waiting_for_ground": len(self.reporter.pending)},
         }
 
 
@@ -202,6 +255,34 @@ def create_dsync_router(node: DsyncNode, fetch_server_time: Callable[[], Awaitab
     async def token(body: Dict[str, Any] = Body(...)):
         return node.mutex.token_control(body.get("action", "stop"), body.get("run_id"), body.get("ring"),
                                         bool(body.get("create")))
+
+    @router.post("/control/tasks")
+    async def tasks_control(body: Dict[str, Any] = Body(...)):
+        action = body.get("action")
+        if action == "traffic":
+            node.tasks.traffic = bool(body.get("enabled"))
+            return {"traffic": node.tasks.traffic}
+        if action == "handoff":
+            return {"to": await node.tasks.handoff_once(body.get("run_id"))}
+        if action == "assign":
+            try:
+                return await node.tasks.operator_assign(body["task_id"], body["owner"])
+            except (RuntimeError, ValueError) as exc:
+                raise HTTPException(409, str(exc))
+        if action == "reconcile":
+            if node.election.leader != node.node_id:
+                raise HTTPException(409, "only the leader reconciles task ownership")
+            return {"results": await node.tasks.reconcile()}
+        raise HTTPException(422, "action must be traffic, handoff, assign or reconcile")
+
+    @router.post("/control/snapshot")
+    async def snapshot_start(body: Dict[str, Any] = Body(...)):
+        return await node.snapshots.start(body.get("snapshot_id") or f"snap-{int(time.time() * 1000)}")
+
+    @router.post("/control/deadlock/run")
+    async def deadlock_run(body: Dict[str, Any] = Body(...)):
+        return await node.deadlock.run_scenario(body.get("target"), float(body.get("hold_ms", 800)),
+                                                body.get("run_id") or f"deadlock-{int(time.time() * 1000)}")
 
     @router.post("/control/send")
     async def crosslink(body: Dict[str, Any] = Body(...)):

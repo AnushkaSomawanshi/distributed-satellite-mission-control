@@ -15,6 +15,9 @@ import {
   Crown,
   Clock,
   Swords,
+  Camera,
+  Workflow,
+  RadioTower,
 } from 'lucide-react';
 
 const navItems = [
@@ -36,7 +39,10 @@ const fa2Items = [
   { path: '/lens', name: 'Causality Lens', icon: GitBranch },
   { path: '/election', name: 'Leader Election', icon: Crown },
   { path: '/clocks', name: 'Clock Sync', icon: Clock },
-  { path: '/arena', name: 'Algorithm Arena', icon: Swords }
+  { path: '/arena', name: 'Algorithm Arena', icon: Swords },
+  { path: '/snapshots', name: 'Global Snapshot', icon: Camera },
+  { path: '/deadlock', name: 'Deadlock Detection', icon: Workflow },
+  { path: '/blackout', name: 'Ground Blackout', icon: RadioTower }
 ];
 
 

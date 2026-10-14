@@ -10,6 +10,7 @@ in batches to Mission Control through a pluggable async sink (RabbitMQ, or HTTP 
 import asyncio
 import logging
 import time
+import uuid
 from collections import deque
 from typing import Any, Awaitable, Callable, Deque, Dict, List, Optional
 
@@ -22,6 +23,7 @@ class EventReporter:
     def __init__(self, node_id: str, sink: Optional[Sink] = None, keep: int = 5000, max_pending: int = 20000):
         self.node_id = node_id
         self.sink = sink
+        self.boot_id = uuid.uuid4().hex[:6]   # event IDs stay unique across process restarts
         self.seq = 0
         self.local: Deque[Dict[str, Any]] = deque(maxlen=keep)   # recent history, served at /dsync/events
         self.pending: Deque[Dict[str, Any]] = deque(maxlen=max_pending)  # not yet delivered to Mission Control
@@ -31,7 +33,8 @@ class EventReporter:
 
     def record(self, event: Dict[str, Any]) -> Dict[str, Any]:
         self.seq += 1
-        event.setdefault("event_id", f"{self.node_id}-{self.seq}")
+        event.setdefault("event_id", f"{self.node_id}-{self.boot_id}-{self.seq}")
+        event["boot_id"] = self.boot_id
         event["node"] = self.node_id
         event["seq"] = self.seq
         if len(self.pending) == self.pending.maxlen:

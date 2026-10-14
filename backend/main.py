@@ -34,6 +34,7 @@ fault_simulator = FaultSimulator(global_registry)
 
 from backend.services.event_manager import generate_correlation_id, create_event
 from backend.fa2 import router as fa2
+from backend.fa2 import phase3 as fa2_phase3
 
 fa2.bind(fault_simulator=fault_simulator, broadcaster=websocket_manager)
 
@@ -146,6 +147,7 @@ async def lifespan(app: FastAPI):
     await rabbitmq_manager.register_event_listener(fa2.ingest_broker_message)
     
     sweeper_task = asyncio.create_task(heartbeat_sweeper_task())
+    task_mirror = asyncio.create_task(fa2_phase3.task_mirror_loop())
     yield
     # Shutdown logic
     sweeper_task.cancel()
@@ -157,6 +159,16 @@ app = FastAPI(
 )
 
 app.include_router(fa2.router)
+app.include_router(fa2_phase3.router)
+
+
+@app.middleware("http")
+async def ground_blackout_gate(request, call_next):
+    """Ground Blackout Mode (simulated): refuse satellite traffic while the operator console keeps working."""
+    if fa2_phase3.blackout_blocks(request.url.path, request.method):
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"detail": "ground segment unavailable (blackout)"}, status_code=503)
+    return await call_next(request)
 
 app.add_middleware(
     CORSMiddleware,
@@ -641,7 +653,6 @@ async def trigger_ring_election(initiator_id: str = Query("SAT-01"), db: AsyncSe
 
 # Import FA-2 & MissionResilience Platform Services
 from backend.services.task_manager import global_task_manager
-from backend.services.snapshot_manager import global_snapshot_manager
 from backend.services.impact_analyzer import global_impact_analyzer
 from backend.services.reallocation_engine import global_reallocation_engine
 from backend.services.resilience_engine import global_resilience_engine
@@ -735,11 +746,13 @@ async def get_clock_status():
 
 @app.get("/api/tasks")
 async def list_mission_tasks():
-    return {
-        "tasks": global_task_manager.list_tasks(),
-        "capabilities_map": global_task_manager.get_capabilities_map(),
-        "timestamp": time.time()
-    }
+    """Task ownership as the satellites report it (they own the tasks); DB mirror only if none respond."""
+    out = await fa2_phase3.tasks()
+    if not any(t["current_owner"] for t in out["tasks"]):
+        out = {"tasks": global_task_manager.list_tasks(), "capabilities_map": global_task_manager.get_capabilities_map(),
+               "source": "mission-control mirror (no satellite responded)"}
+    out["timestamp"] = time.time()
+    return out
 
 @app.post("/api/tasks/{task_id}/reassign")
 async def reassign_task_endpoint(task_id: str, req: dict):
@@ -747,7 +760,8 @@ async def reassign_task_endpoint(task_id: str, req: dict):
     reason = req.get("reason", "OPERATOR_REASSIGNMENT")
     if not new_owner:
         raise HTTPException(status_code=400, detail="new_owner is required")
-    res = global_task_manager.reassign_task(task_id, new_owner, reason)
+    # The request is forwarded to the elected leader satellite, which validates capability and moves the task.
+    res = await fa2_phase3.tasks_assign({"task_id": task_id, "owner": new_owner})
     await websocket_manager.broadcast({
         "event_type": "TASK_REASSIGNED",
         "task_id": task_id,
@@ -771,7 +785,7 @@ async def get_beacon_states():
 
 @app.post("/api/snapshots")
 async def take_global_snapshot(initiator_id: str = Query("SAT-01")):
-    res = global_snapshot_manager.take_snapshot(initiator_id=initiator_id)
+    res = await fa2_phase3.snapshot({"initiator": initiator_id})
     await websocket_manager.broadcast({
         "event_type": "SNAPSHOT_COMPLETED",
         "snapshot_id": res["snapshot_id"],
@@ -782,7 +796,7 @@ async def take_global_snapshot(initiator_id: str = Query("SAT-01")):
 
 @app.get("/api/snapshots")
 async def list_snapshots():
-    return {"snapshots": global_snapshot_manager.snapshots_history, "timestamp": time.time()}
+    return {"snapshots": fa2_phase3.snapshot_history[-20:], "timestamp": time.time()}
 
 # ------------------- IMPACT ANALYSIS & REALLOCATION APIs -------------------
 
@@ -792,7 +806,8 @@ async def analyze_node_impact(node_id: str):
 
 @app.post("/api/reallocate/execute/{failed_node_id}")
 async def execute_task_reallocation(failed_node_id: str):
-    res = await global_reallocation_engine.execute_reallocation_for_failed_node(failed_node_id)
+    # The leader satellite reassigns tasks of satellites it no longer sees alive (decision taken on board).
+    res = await fa2_phase3.tasks_reconcile()
     await websocket_manager.broadcast({
         "event_type": "AUTONOMOUS_REALLOCATION_COMPLETED",
         "result": res,

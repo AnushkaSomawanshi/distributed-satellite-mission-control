@@ -8,6 +8,7 @@ import argparse
 import asyncio
 import logging
 import uuid
+from collections import deque
 from concurrent import futures
 from typing import Any, Dict, List, Optional
 
@@ -80,14 +81,48 @@ class SatelliteNode:
 
         # FA-2: clocks, beacons, election, clock sync and mutual exclusion run HERE, between satellites.
         self.dsync = DsyncNode(satellite_id, info=self._dsync_info,
-                               event_sink=self.telemetry_publisher.publish_events,
+                               event_sink=self._ship_events,
                                election_algorithm=os.getenv("ELECTION_ALGORITHM", "bully"))
+
+        # Ground Blackout Mode: consecutive failed heartbeats -> ground lost; telemetry is buffered
+        self.heartbeat_failures = 0
+        self.telemetry_buffer: deque = deque(maxlen=2000)
+
+    async def _ship_events(self, events: list) -> bool:
+        # While the ground segment is lost, events stay in the satellite's own buffer (nothing is dropped).
+        if not self.dsync.ground_ok:
+            return False
+        return await self.telemetry_publisher.publish_events(events)
+
+    def _ground_result(self, ok: bool) -> None:
+        if ok:
+            self.heartbeat_failures = 0
+            if not self.dsync.ground_ok:
+                self.dsync.set_ground(True)
+        else:
+            self.heartbeat_failures += 1
+            if self.heartbeat_failures >= 3 and self.dsync.ground_ok:
+                self.dsync.set_ground(False)
+
+    async def _publish_telemetry(self) -> None:
+        sample = self.get_telemetry_dict()
+        if not self.dsync.ground_ok:
+            sample["buffered_during_blackout"] = True
+            self.telemetry_buffer.append(sample)
+            return
+        while self.telemetry_buffer:  # ground is back: deliver what was recorded during the blackout first
+            if await self.telemetry_publisher.publish(self.telemetry_buffer[0]) == "FAILED":
+                break
+            self.telemetry_buffer.popleft()
+        await self.telemetry_publisher.publish(sample)
 
     def _dsync_info(self) -> Dict[str, Any]:
         return {
             "address": self.address,
             "p2p_port": self.p2p_port,
             "health": self.calculate_health_score(),
+            "battery": round(self.battery, 2),
+            "signal": round(self.signal_strength, 2),
             "position": {"latitude": getattr(self, "latitude", None), "longitude": getattr(self, "longitude", None)},
         }
 
@@ -326,10 +361,15 @@ class SatelliteNode:
         try:
             async with httpx.AsyncClient(timeout=3.0) as client:
                 resp = await client.post(url, json=payload)
+                if resp.status_code == 503:
+                    self._ground_result(False)  # ground station not accepting satellite traffic
+                    return
+                self._ground_result(True)
                 if resp.status_code != 200:
                     logger.warning(f"[{self.satellite_id}] Heartbeat rejected (HTTP {resp.status_code}); re-registering")
                     await self.register_with_mission_control()
         except Exception as exc:
+            self._ground_result(False)
             logger.warning(f"[{self.satellite_id}] Heartbeat to Mission Control failed: {exc.__class__.__name__}: {exc}")
 
     async def start_autonomous_loop(self):
@@ -348,7 +388,7 @@ class SatelliteNode:
             try:
                 self.step_telemetry()
                 await self.send_heartbeat()  # liveness (HTTP, registry)
-                await self.telemetry_publisher.publish(self.get_telemetry_dict())  # data stream (RabbitMQ)
+                await self._publish_telemetry()  # data stream (RabbitMQ); buffered during a ground blackout
                 await asyncio.sleep(2.0)  # fixed cadence: heartbeat timeouts (5s/10s) assume ~2s
             except asyncio.CancelledError:
                 break

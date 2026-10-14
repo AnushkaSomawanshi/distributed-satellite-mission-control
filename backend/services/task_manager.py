@@ -11,70 +11,14 @@ import logging
 from typing import Dict, Any, List, Optional
 from backend.database.db import get_db_context
 from backend.database.models import MissionModel, MissionTaskModel
-from backend.services.distributed_clocks import global_clock_manager
 
 logger = logging.getLogger("TaskManager")
 
-SATELLITE_CAPABILITIES = {
-    "SAT-01": ["CAMERA", "RELAY", "COMPUTE"],
-    "SAT-02": ["CAMERA", "THERMAL"],
-    "SAT-03": ["THERMAL", "RELAY", "COMPUTE"],
-    "SAT-04": ["CAMERA", "RELAY"],
-    "SAT-05": ["CAMERA", "THERMAL", "RELAY", "COMPUTE"]
-}
+from backend.fa2_extensions.catalog import MISSION_TASKS, SATELLITE_CAPABILITIES  # shared with the satellites
 
-DEFAULT_TASKS = [
-    {
-        "task_id": "T-047",
-        "mission_id": "MIS-EARTH-OBS",
-        "task_type": "EARTH_OBSERVATION",
-        "description": "High-resolution coastal erosion imaging over Pacific sector.",
-        "priority": "HIGH",
-        "required_capabilities": ["CAMERA", "COMPUTE"],
-        "current_owner": "SAT-03",
-        "status": "RUNNING"
-    },
-    {
-        "task_id": "T-048",
-        "mission_id": "MIS-THERMAL-SCAN",
-        "task_type": "THERMAL_MAP",
-        "description": "Volcanic activity monitoring & thermal anomaly detection.",
-        "priority": "HIGH",
-        "required_capabilities": ["THERMAL"],
-        "current_owner": "SAT-02",
-        "status": "RUNNING"
-    },
-    {
-        "task_id": "T-049",
-        "mission_id": "MIS-RELAY-NET",
-        "task_type": "DATA_RELAY",
-        "description": "Deep-space probe telemetry backhaul relay stream.",
-        "priority": "MEDIUM",
-        "required_capabilities": ["RELAY"],
-        "current_owner": "SAT-01",
-        "status": "RUNNING"
-    },
-    {
-        "task_id": "T-050",
-        "mission_id": "MIS-ORBITAL-COMPUTE",
-        "task_type": "COMPUTE_ANALYTICS",
-        "description": "Orbital debris trajectory prediction & collision risk processing.",
-        "priority": "HIGH",
-        "required_capabilities": ["COMPUTE"],
-        "current_owner": "SAT-05",
-        "status": "RUNNING"
-    },
-    {
-        "task_id": "T-051",
-        "mission_id": "MIS-ATMOS-RELAY",
-        "task_type": "DATA_RELAY",
-        "description": "Atmospheric sensor constellation aggregation.",
-        "priority": "LOW",
-        "required_capabilities": ["RELAY", "COMPUTE"],
-        "current_owner": "SAT-04",
-        "status": "RUNNING"
-    }
-]
+# Seed rows only; afterwards this table MIRRORS ownership reported by the satellites (they own the tasks).
+DEFAULT_TASKS = [{**{k: v for k, v in t.items() if k != "initial_owner"},
+                  "current_owner": t["initial_owner"], "status": "RUNNING"} for t in MISSION_TASKS]
 
 class TaskManager:
     def __init__(self):
@@ -97,7 +41,6 @@ class TaskManager:
                 for t_info in DEFAULT_TASKS:
                     t_model = db.query(MissionTaskModel).filter_by(task_id=t_info["task_id"]).first()
                     if not t_model:
-                        clk = global_clock_manager.record_node_event(t_info["current_owner"], "TASK_INITIALIZED")
                         t_model = MissionTaskModel(
                             task_id=t_info["task_id"],
                             mission_id=t_info["mission_id"],
@@ -108,8 +51,8 @@ class TaskManager:
                             current_owner=t_info["current_owner"],
                             previous_owner=None,
                             status=t_info["status"],
-                            lamport_timestamp=clk["lamport_timestamp"],
-                            vector_clock=json.dumps(clk["vector_clock"]),
+                            lamport_timestamp=0,
+                            vector_clock=json.dumps({}),
                             created_at=time.time(),
                             updated_at=time.time()
                         )
@@ -161,35 +104,18 @@ class TaskManager:
                 "updated_at": t.updated_at
             }
 
-    def reassign_task(self, task_id: str, new_owner: str, reason: str = "AUTONOMOUS_REALLOCATION") -> Dict[str, Any]:
+    def mirror(self, task_id: str, owner: str, status: str, version: Optional[int] = None) -> None:
+        """Record ownership as reported by the satellites (no decision is taken here)."""
         with get_db_context() as db:
             t = db.query(MissionTaskModel).filter_by(task_id=task_id).first()
-            if not t:
-                raise ValueError(f"Task {task_id} not found")
-
-            prev = t.current_owner
-            t.previous_owner = prev
-            t.current_owner = new_owner
-            t.status = "REASSIGNED"
+            if not t or (t.current_owner == owner and t.status == status):
+                return
+            if t.current_owner != owner:
+                t.previous_owner = t.current_owner
+                t.current_owner = owner
+            t.status = status
             t.updated_at = time.time()
-
-            clk = global_clock_manager.record_node_event(new_owner, f"TASK_REASSIGNED_{task_id}")
-            t.lamport_timestamp = clk["lamport_timestamp"]
-            t.vector_clock = json.dumps(clk["vector_clock"])
-
             db.commit()
-
-            logger.info(f"[TASK REASSIGNMENT] Task {task_id} transferred from {prev} -> {new_owner} | Reason={reason}")
-
-            return {
-                "task_id": task_id,
-                "previous_owner": prev,
-                "new_owner": new_owner,
-                "status": "REASSIGNED",
-                "lamport_timestamp": clk["lamport_timestamp"],
-                "vector_clock": clk["vector_clock"],
-                "updated_at": t.updated_at
-            }
 
     def get_capabilities_map(self) -> Dict[str, List[str]]:
         return dict(SATELLITE_CAPABILITIES)

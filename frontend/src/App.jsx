@@ -23,6 +23,8 @@ import ClockSyncPage from './pages/ClockSyncPage';
 import LeaderElectionPage from './pages/LeaderElectionPage';
 import CausalityLensPage from './pages/CausalityLensPage';
 import AlgorithmArenaPage from './pages/AlgorithmArenaPage';
+import DeadlockPage from './pages/DeadlockPage';
+import BlackoutPage from './pages/BlackoutPage';
 import GlobalSnapshotPage from './pages/GlobalSnapshotPage';
 import IncidentConsolePage from './pages/IncidentConsolePage';
 import FailureIntelligencePage from './pages/FailureIntelligencePage';
@@ -155,6 +157,8 @@ export default function App() {
               <Route path="/election" element={<LeaderElectionPage />} />
               <Route path="/ring-election" element={<LeaderElectionPage />} />
               <Route path="/arena" element={<AlgorithmArenaPage />} />
+              <Route path="/deadlock" element={<DeadlockPage />} />
+              <Route path="/blackout" element={<BlackoutPage />} />
               <Route path="/mutex" element={<AlgorithmArenaPage />} />
               <Route path="/snapshots" element={<GlobalSnapshotPage />} />
               <Route path="/failure-intelligence" element={<FailureIntelligencePage />} />
