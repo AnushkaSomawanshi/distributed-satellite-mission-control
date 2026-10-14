@@ -242,7 +242,8 @@ docker compose ps
 
 ## 17. Accessing System Interfaces
 
-- **Mission Control Frontend Dashboard**: `http://localhost:3000/`
+- **Dashboard through the Nginx gateway (recommended)**: `http://localhost:8080/`
+- **Mission Control Frontend Dashboard (Vite dev)**: `http://localhost:3000/`
 - **Satellite Service Registry**: `http://localhost:3000/registry`
 - **Live Telemetry Line Charts**: `http://localhost:3000/telemetry`
 - **Communication Observatory**: `http://localhost:3000/observatory`
@@ -299,7 +300,15 @@ docker compose start satellite-02
 | **Mutual Exclusion (4 algorithms)** | **FULLY IMPLEMENTED (FA-2)** | Centralised, Ricart–Agrawala, Token Ring, Lodha–Kshemkalyani: `satellites/dsync/mutex.py` |
 | **WebRTC Signaling** | **PARTIALLY IMPLEMENTED** | SDP offer/answer exchange stubs in `webrtc_signaling.py` |
 | **Lamport & Vector Clocks** | **FULLY IMPLEMENTED (FA-2)** | Stamped on every satellite message: `satellites/dsync/clocks.py`, `transport.py` |
-| **Chandy-Lamport Snapshots** | **PHASE 3** | Current snapshot service still reads Mission Control state |
+| **Chandy-Lamport Snapshots** | **FULLY IMPLEMENTED (FA-2)** | Markers over FIFO satellite channels: `satellites/dsync/snapshot.py` |
+| **Deadlock Detection (Chandy–Misra–Haas)** | **FULLY IMPLEMENTED (FA-2)** | Edge-chasing probes, youngest-victim resolution: `satellites/dsync/deadlock.py` |
+| **Task Redistribution + Ground Blackout Mode** | **FULLY IMPLEMENTED (FA-2)** | Satellite-owned tasks, quorum + version fencing, autonomous operation: `satellites/dsync/tasks.py`, `node.py` |
+| **OrbitFS + MapReduce (Hadoop case study)** | **FULLY IMPLEMENTED (FA-2)** | `backend/fa2/orbitfs.py`, `mapreduce.py`, `satellites/dsync/datanode.py` |
+| **Serverless Runtime** | **FULLY IMPLEMENTED (FA-2)** | Process-per-instance, cold/warm, scale to zero: `backend/fa2/serverless.py` |
+| **Distributed Objects (Pyro5)** | **FULLY IMPLEMENTED (FA-2)** | `satellites/dsync/remote_objects.py`, `backend/fa2/objects.py` |
+| **Nginx Gateway + Standby** | **FULLY IMPLEMENTED (FA-2)** | `docker/gateway/nginx.conf`, `backend/fa2/role.py` |
+| **Kubernetes** | **FULLY IMPLEMENTED (FA-2)** | StatefulSet satellites, validated manifests: `k8s/` |
+| **Command Ledger + CAP demo** | **FULLY IMPLEMENTED (FA-2)** | `satellites/dsync/ledger.py`, `statusboard.py` |
 
 ---
 
@@ -316,6 +325,9 @@ Detailed engineering and viva documentation files are located in the [`docs/`](d
 - 🐳 **[Deployment & Containerization](docs/DEPLOYMENT.md)**: Docker Compose blueprint, ports, and troubleshooting.
 - 🔌 **[API Documentation](docs/API.md)**: REST endpoints, request/response schemas, and WebSocket events.
 - 🎬 **[Teacher Demonstration Guide](docs/DEMO_GUIDE.md)**: Step-by-step presentation script and viva prompts.
-- 🛰️ **[FA-2 Phase 1 + 2](docs/FA2_PHASE_1_2.md)**: Unit 3 algorithms on the satellites, measured results, demo script 15–21.
+- 🛰️ **[FA-2 Complete Guide](docs/FA2_GUIDE.md)**: Units 3 and 4 syllabus coverage, measured results, demo script 15–30, viva notes.
+- ☁️ **[Unit 4 Case Studies](docs/CASE_STUDIES.md)**: Hadoop and Kubernetes (implemented), AWS, Cloudflare, Megaport (mapped).
+- ⎈ **[Kubernetes](k8s/README.md)**: running the constellation on kind / minikube.
+- 🛰️ **[FA-2 Phase 1 + 2 details](docs/FA2_PHASE_1_2.md)**: first two phases in depth.
 - 🧪 **[Testing & Verification](docs/TESTING.md)**: Automated tests, manual test matrix, and verification status.
 - 📂 **[Project Structure](docs/PROJECT_STRUCTURE.md)**: Repository map, module responsibilities, and data models.

@@ -86,9 +86,19 @@ class SatelliteNode:
                                event_sink=self._ship_events,
                                election_algorithm=os.getenv("ELECTION_ALGORITHM", "bully"))
 
+        # Commands committed in the ledger that target this satellite take effect here
+        self.dsync.ledger.on_apply.append(self._apply_command)
+
         # Ground Blackout Mode: consecutive failed heartbeats -> ground lost; telemetry is buffered
         self.heartbeat_failures = 0
         self.telemetry_buffer: deque = deque(maxlen=2000)
+
+    def _apply_command(self, cmd: Dict[str, Any]) -> None:
+        if cmd.get("action") == "SET_POWER_MODE":
+            mode = (cmd.get("params") or {}).get("mode", "NORMAL")
+            if mode in ("NORMAL", "POWER_SAVING", "THERMAL_PROTECTION"):
+                self.power_mode = mode
+                logger.info(f"[{self.satellite_id} LEDGER] power mode set to {mode} by committed command")
 
     async def _ship_events(self, events: list) -> bool:
         # While the ground segment is lost, events stay in the satellite's own buffer (nothing is dropped).

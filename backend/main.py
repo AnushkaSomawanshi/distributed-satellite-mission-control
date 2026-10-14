@@ -38,6 +38,7 @@ from backend.fa2 import phase3 as fa2_phase3
 from backend.fa2 import orbitfs as fa2_orbitfs, mapreduce as fa2_mapreduce, serverless as fa2_serverless
 from backend.fa2 import objects as fa2_objects, role as fa2_role
 from backend.fa2.bus import mission_bus
+from backend.fa2 import phase5 as fa2_phase5
 
 fa2.bind(fault_simulator=fault_simulator, broadcaster=websocket_manager)
 
@@ -177,6 +178,7 @@ app.include_router(fa2_orbitfs.router)
 app.include_router(fa2_mapreduce.router)
 app.include_router(fa2_serverless.router)
 app.include_router(fa2_objects.router)
+app.include_router(fa2_phase5.router)
 
 
 @app.middleware("http")
@@ -679,8 +681,6 @@ from backend.services.incident_replay import global_incident_replay_engine
 from backend.services.failure_intelligence import global_failure_intelligence
 from backend.services.predictive_health import global_predictive_health
 from backend.services.dependency_graph import global_dependency_graph
-from backend.services.partition_reconciliation import global_partition_reconciliation
-from backend.services.security_audit import global_security_audit
 
 # ------------------- FAILURE INTELLIGENCE & PREDICTIVE APIs -------------------
 
@@ -723,25 +723,31 @@ async def run_resilience_experiment_endpoint(req: dict):
 
 @app.post("/api/partition/simulate")
 async def simulate_partition_endpoint(req: dict):
-    group_a = req.get("group_a", ["SAT-01", "SAT-02"])
-    group_b = req.get("group_b", ["SAT-03", "SAT-04", "SAT-05"])
-    return global_partition_reconciliation.simulate_partition(group_a, group_b)
+    """Real partition enforced by the satellites (see the CAP page for what each store does under it)."""
+    group_a = req.get("group_a", ["SAT-01", "SAT-02", "SAT-03"])
+    group_b = req.get("group_b", ["SAT-04", "SAT-05"])
+    return await fa2.fault_partition({"groups": [group_a, group_b]})
 
 @app.post("/api/partition/reconcile")
 async def reconcile_partition_endpoint():
-    return global_partition_reconciliation.reconcile_partition()
+    """Heal: satellites push their status boards (vector-clock merge) and catch up the ledger."""
+    healed = await fa2.fault_heal()
+    await asyncio.sleep(1.5)
+    return {"healed": healed, "board": await fa2_phase5.board_view(), "ledger": await fa2_phase5.ledger_view()}
 
 # ------------------- SECURITY & AUDIT APIs -------------------
 
 @app.get("/api/security/audit")
 async def get_security_audit_logs():
-    return {"audit_logs": global_security_audit.get_audit_trail(), "timestamp": time.time()}
+    """Audit trail = the signed command ledger replicated on the satellites."""
+    view = await fa2_phase5.ledger_view()
+    return {"audit_logs": view["blocks"], "copies": view["copies"], "timestamp": time.time()}
 
 @app.post("/api/security/verify")
 async def verify_signature_endpoint(req: dict):
-    sig = global_security_audit.verify_message_signature(req)
-    global_security_audit.log_action("Operator", "Mission Operator", "VERIFY_SIGNATURE", req.get("source", "SAT-01"))
-    return {"signature": sig, "valid": True}
+    view = await fa2_phase5.ledger_view()
+    return {"valid": all(c["verification"]["valid"] for c in view["copies"].values() if c.get("reachable")),
+            "copies": view["copies"]}
 
 
 # ------------------- CLOCKS & SYNCHRONIZATION APIs -------------------

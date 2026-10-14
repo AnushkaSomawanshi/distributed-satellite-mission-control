@@ -32,7 +32,7 @@ const navItems = [
   { path: '/runtime-observability', name: 'System Events', icon: Terminal },
   { path: '/incidents', name: 'Incidents & Recovery', icon: History },
   { path: '/faults', name: 'Fault Controls', icon: Zap },
-  { path: '/partition', name: 'Network Reconciliation', icon: Network },
+  { path: '/partition', name: 'CAP: Ledger vs Board', icon: Network },
   { path: '/multimedia', name: 'Payload Streaming', icon: Video }
 ];
 

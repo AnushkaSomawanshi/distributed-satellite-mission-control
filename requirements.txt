@@ -14,3 +14,4 @@ protobuf>=4.25
 httpx>=0.27
 aio-pika>=9.4
 Pyro5>=5.15
+cryptography>=42

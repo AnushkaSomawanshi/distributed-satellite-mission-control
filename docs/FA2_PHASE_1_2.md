@@ -1,5 +1,8 @@
 # FA-2 Phase 1 + 2 — Unit 3 algorithms running on the satellites
 
+> All five FA-2 phases are now complete. Start with **[FA2_GUIDE.md](FA2_GUIDE.md)** (full syllabus
+> coverage, results and demo script 15–30); this file keeps the Phase 1–2 details.
+
 **Status:** implemented and verified (unit tests + live 5-satellite run).
 Gate 1 ("Causality Lens on real messages") and Gate 2 ("Arena shows measured runs") are met.
 
@@ -82,9 +85,9 @@ Numbers vary run to run; the Arena always shows the latest measured values.
   messages stay between N−1 and 2(N−1).
 - **Bully priority** is (health rounded down to tens, ID), not the ID alone.
 - **Token Ring** circulates only while an Arena run is active; the token parks otherwise.
-- **Still on Mission Control (Phase 3):** the snapshot, partition-reconciliation and task services
-  still use Mission Control's old in-memory clocks; Phase 3 moves Chandy–Lamport and task
-  redistribution onto the satellites.
+- **Phase 3–5 update:** snapshots, task redistribution, deadlock detection, the ledger and the status board
+  now also run on the satellites; Mission Control's old in-memory clock, snapshot, mutex, partition and
+  security services were removed.
 
 ## Verify it yourself
 

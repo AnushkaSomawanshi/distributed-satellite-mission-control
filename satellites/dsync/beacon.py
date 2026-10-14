@@ -43,6 +43,7 @@ class BeaconService:
             "battery": info.get("battery"),
             "signal": info.get("signal"),
             "tasks": self.node.tasks.summary(),
+            "ledger": self.node.ledger.summary(),
             "priority": self.node.election.priority(),
             "leader": self.node.election.leader,
             "term": self.node.election.term,
@@ -96,6 +97,7 @@ class BeaconService:
                 asyncio.create_task(cb(src))
         await self.node.election.observe_beacon(src, p)
         self.node.tasks.observe_beacon(src, p)
+        self.node.ledger.observe_beacon(src, p)
         return None
 
     async def run(self) -> None:

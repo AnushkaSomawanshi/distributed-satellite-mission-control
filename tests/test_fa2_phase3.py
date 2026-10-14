@@ -175,3 +175,34 @@ async def test_recovered_satellite_does_not_declare_peers_dead_from_its_own_sile
     dead_from_05 = [e for e in c["SAT-05"].reporter.local
                     if e.get("label") == "PEER_DEAD" and e["true_ts"] > time.time() - 1]
     assert dead_from_05 == []
+
+
+@pytest.mark.asyncio
+async def test_partition_does_not_cause_split_brain_task_ownership():
+    c = fast(Cluster())
+    await c.beacon_round()
+    await c["SAT-01"].election.start("bully", run_id="lead")
+    assert await until(lambda: all(n.election.leader == "SAT-05" for n in c.alive()))
+    await c.beacon_round()
+    groups = [["SAT-01", "SAT-02", "SAT-03"], ["SAT-04", "SAT-05"]]
+    for n in c.nodes.values():
+        n.apply_fault("PARTITION", {"groups": groups})
+    c.now[0] += 6.0                                   # cross-partition beacons stop: each side sees the other DEAD
+    await c.beacon_round()
+    await c["SAT-01"].election.start("bully", run_id="maj")
+    assert await until(lambda: c["SAT-01"].election.leader == "SAT-03")
+    await asyncio.sleep(0.5)
+    deferred = [e for e in c["SAT-05"].reporter.local if e.get("label") == "TASK_REASSIGN_DEFERRED"]
+    assert deferred, "the minority-side leader must not reassign tasks"
+    for n in c.nodes.values():
+        n.apply_fault("HEAL", {})
+    for _ in range(3):
+        await c.beacon_round()
+        await asyncio.sleep(0.2)
+    await c["SAT-01"].election.start("bully", run_id="after")
+    assert await until(lambda: len({n.election.leader for n in c.alive()}) == 1, timeout=5)
+    for _ in range(3):
+        await c.beacon_round()
+        await asyncio.sleep(0.2)
+    own = owners(c)
+    assert set(own) == ALL_TASKS and all(len(v) == 1 for v in own.values()), own

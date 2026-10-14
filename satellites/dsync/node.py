@@ -22,7 +22,9 @@ from .deadlock import DeadlockService
 from .election import ElectionService
 from .events import EventReporter
 from .mutex import ALGORITHMS as MUTEX_ALGORITHMS, MutexError, MutexService
+from .ledger import LedgerService, verify_chain
 from .snapshot import SnapshotService
+from .statusboard import StatusBoard
 from .tasks import TaskService
 from .transport import HttpNetwork, PeerDirectory, PeerUnreachable, Transport
 
@@ -56,6 +58,8 @@ class DsyncNode:
         self.snapshots = SnapshotService(self)
         self.deadlock = DeadlockService(self)
         self.datanode = DataNode(self)          # OrbitFS storage + MapReduce tasks (Unit 4)
+        self.ledger = LedgerService(self)       # CP: signed, hash-chained command ledger
+        self.board = StatusBoard(self)          # AP: vector-clock replicated status board
         self.pyro_uri: Optional[str] = None     # distributed object (Unit 4)
         self.pyro_registered = False
         self.beacons.on_peer_dead += [self.election.on_peer_dead, self.mutex.on_peer_dead, self.tasks.on_peer_dead]
@@ -72,7 +76,7 @@ class DsyncNode:
         loop = asyncio.get_running_loop()
         self._tasks = [loop.create_task(self.reporter.run()), loop.create_task(self.beacons.run()),
                        loop.create_task(self._leader_watch()), loop.create_task(self.tasks.run()),
-                       loop.create_task(self._blackout_autonomy())]
+                       loop.create_task(self._blackout_autonomy()), loop.create_task(self.board.run())]
 
     async def stop(self) -> None:
         for t in self._tasks:
@@ -139,6 +143,7 @@ class DsyncNode:
         elif fault == "HEAL":
             t.blocked = set()
             self.partition_groups = None
+            asyncio.ensure_future(self._after_heal())
         elif fault == "CRASH":
             t.silent = True
         elif fault == "RECOVER":
@@ -161,6 +166,13 @@ class DsyncNode:
         await asyncio.sleep(self.beacons.interval * 1.5)
         if self.election.default_algorithm == "bully" and not self.transport.silent:
             await self.election.start("bully", reason="RECOVERED")
+
+    async def _after_heal(self) -> None:
+        """Links are back: push the status board to everyone (anti-entropy) and catch up the ledger."""
+        await asyncio.sleep(0.5)
+        for p in self.directory.live_ids():
+            await self.board.push_to(p)
+            await self.ledger.catch_up(p)
 
     async def _on_crosslink(self, env: Dict[str, Any]) -> None:
         return None
@@ -188,6 +200,8 @@ class DsyncNode:
             "orbitfs": {"chunks": len(self.datanode.chunks), "used_bytes": self.datanode.used_bytes(),
                         "stats": self.datanode.stats},
             "pyro": {"uri": self.pyro_uri, "registered": self.pyro_registered},
+            "ledger": self.ledger.to_dict(),
+            "board": self.board.to_dict(),
             "ground": {"ok": self.ground_ok, "lost_at": self.ground_lost_at, "blackouts": self.blackouts[-5:],
                        "events_waiting_for_ground": len(self.reporter.pending)},
         }
@@ -290,6 +304,34 @@ def create_dsync_router(node: DsyncNode, fetch_server_time: Callable[[], Awaitab
     async def deadlock_run(body: Dict[str, Any] = Body(...)):
         return await node.deadlock.run_scenario(body.get("target"), float(body.get("hold_ms", 800)),
                                                 body.get("run_id") or f"deadlock-{int(time.time() * 1000)}")
+
+    @router.get("/ledger")
+    async def ledger_chain():
+        return {"node": node.node_id, "chain": node.ledger.chain, "pubkeys": node.ledger.pubkeys(),
+                "verification": verify_chain(node.ledger.chain, node.ledger.pubkeys())}
+
+    @router.post("/control/ledger")
+    async def ledger_control(body: Dict[str, Any] = Body(...)):
+        action = body.get("action")
+        try:
+            if action == "submit":
+                return await node.ledger.submit(body.get("command") or {}, body.get("run_id"))
+            if action == "tamper":
+                return node.ledger.tamper(int(body.get("index", 0)))
+            if action == "repair":
+                return await node.ledger.repair()
+        except (RuntimeError, ValueError, IndexError) as exc:
+            raise HTTPException(409, str(exc))
+        raise HTTPException(422, "action must be submit, tamper or repair")
+
+    @router.post("/control/board")
+    async def board_control(body: Dict[str, Any] = Body(...)):
+        action = body.get("action")
+        if action == "put":
+            return await node.board.put(body["key"], body.get("value"))
+        if action == "resolve":
+            return await node.board.resolve(body["key"], body.get("strategy", "lww"))
+        raise HTTPException(422, "action must be put or resolve")
 
     @router.post("/control/send")
     async def crosslink(body: Dict[str, Any] = Body(...)):

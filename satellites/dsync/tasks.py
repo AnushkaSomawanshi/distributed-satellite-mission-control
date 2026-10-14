@@ -10,6 +10,9 @@ Mission tasks are OWNED by satellites (Phase 3: autonomous task redistribution).
   satellite (score from backend/fa2_extensions/catalog.py) with version + 1.
 - Fencing: a satellite that comes back still holding an old version is told to drop it
   (TASK_REVOKE), so no task ends up running twice.
+- Quorum: only a leader that can reach a MAJORITY of the constellation (3 of 5, itself included) may
+  move tasks. In a partition both sides elect a leader; without this rule both would reassign the
+  "dead" side's tasks to the same version number (split brain). The minority side defers instead.
 """
 
 import asyncio
@@ -22,6 +25,9 @@ from backend.fa2_extensions.catalog import MISSION_TASKS, TASKS_BY_ID, capable, 
 from .transport import PeerUnreachable
 
 logger = logging.getLogger("dsync.tasks")
+
+CONSTELLATION_SIZE = 5
+QUORUM = CONSTELLATION_SIZE // 2 + 1
 
 
 class TaskService:
@@ -59,6 +65,10 @@ class TaskService:
     def is_leader(self) -> bool:
         return self.node.election.leader == self.node.node_id
 
+    def has_quorum(self) -> bool:
+        reachable = [p for p in self.node.directory.live_ids() if p not in self.node.transport.blocked]
+        return len(reachable) + 1 >= QUORUM
+
     def _note(self, task_id: str, owner: str, version: int) -> None:
         cur = self.known.get(task_id)
         if cur is None or version >= cur["version"]:
@@ -68,7 +78,8 @@ class TaskService:
         for t in payload.get("tasks") or []:
             tid, ver = t["task_id"], int(t["version"])
             cur = self.known.get(tid)
-            if cur and cur["owner"] != src and ver < cur["version"] and self.is_leader():
+            # older OR equal version held by a different satellite = a stale / split-brain copy
+            if cur and cur["owner"] != src and ver <= cur["version"] and self.is_leader():
                 # src holds an outdated copy (e.g. it was declared dead and came back): fence it off
                 asyncio.ensure_future(self._revoke(src, tid, cur["version"], reason="STALE_COPY"))
                 continue
@@ -133,6 +144,11 @@ class TaskService:
 
     async def reassign(self, task_id: str, reason: str, run_id: Optional[str] = None,
                        exclude: tuple = ()) -> Dict[str, Any]:
+        if not self.has_quorum():
+            result = {"task_id": task_id, "reason": reason, "status": "DEFERRED_NO_QUORUM"}
+            self.node.transport.local_event("TASK_REASSIGN_DEFERRED", algo="tasks", run_id=run_id, detail={
+                "task_id": task_id, "why": f"cannot reach a majority ({QUORUM} of {CONSTELLATION_SIZE}) - minority side of a partition?"})
+            return result
         task_def = TASKS_BY_ID[task_id]
         prev = self.known.get(task_id, {"owner": None, "version": 1})
         candidates = [s for s in set(self.node.directory.live_ids()) | {self.node.node_id}
@@ -193,6 +209,8 @@ class TaskService:
         """Operator request routed through the leader: move a task to a chosen capable satellite."""
         if not self.is_leader():
             raise RuntimeError("only the leader assigns tasks")
+        if not self.has_quorum():
+            raise RuntimeError(f"the leader cannot reach a majority ({QUORUM} of {CONSTELLATION_SIZE}); refusing to move tasks")
         if task_id not in TASKS_BY_ID:
             raise ValueError(f"unknown task {task_id}")
         if not capable(owner, TASKS_BY_ID[task_id]):

@@ -6,7 +6,7 @@ COPY proto/ ./proto/
 COPY backend/ ./backend/
 RUN mkdir -p /app/storage_artifacts
 
-RUN pip install --no-cache-dir fastapi uvicorn[standard] pydantic pydantic-settings sqlalchemy greenlet aiosqlite grpcio grpcio-tools httpx aio-pika asyncpg psycopg2-binary Pyro5
+RUN pip install --no-cache-dir fastapi uvicorn[standard] pydantic pydantic-settings sqlalchemy greenlet aiosqlite grpcio grpcio-tools httpx aio-pika asyncpg psycopg2-binary Pyro5 cryptography
 
 
 
